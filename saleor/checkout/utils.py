@@ -1,4 +1,5 @@
 """Checkout-related utility functions."""
+from decimal import Decimal
 from typing import TYPE_CHECKING, Iterable, List, Optional, Tuple, Union, cast
 
 import graphene
@@ -192,7 +193,7 @@ def add_variants_to_checkout(
     checkout,
     variants,
     checkout_lines_data,
-    channel_slug,
+    channel,
     replace=False,
     replace_reservations=False,
     reservation_length: Optional[int] = None,
@@ -226,7 +227,9 @@ def add_variants_to_checkout(
     if to_delete:
         CheckoutLine.objects.filter(pk__in=[line.pk for line in to_delete]).delete()
     if to_update:
-        CheckoutLine.objects.bulk_update(to_update, ["quantity", "price_override"])
+        CheckoutLine.objects.bulk_update(
+            to_update, ["quantity", "price_override", "metadata"]
+        )
     if to_create:
         CheckoutLine.objects.bulk_create(to_create)
 
@@ -234,16 +237,20 @@ def add_variants_to_checkout(
 
     if reservation_length and to_reserve:
         updated_lines_ids = [line.pk for line in to_reserve + to_delete]
+
+        # Validation for stock reservation should be performed on new and updated lines.
+        # For already existing lines only reserved_until should be updated.
+        lines_to_update_reservation_time = []
         for line in checkout_lines:
             if line.pk not in updated_lines_ids:
-                to_reserve.append(line)
-                variants.append(line.variant)
+                lines_to_update_reservation_time.append(line)
 
         reserve_stocks_and_preorders(
             to_reserve,
+            lines_to_update_reservation_time,
             variants,
             country_code,
-            channel_slug,
+            channel,
             reservation_length,
             replace=replace_reservations,
         )
@@ -257,6 +264,10 @@ def _get_line_if_exist(line_data, lines_by_ids):
 
 
 def _append_line_to_update(to_update, to_delete, line_data, replace, line):
+    if line_data.metadata_list:
+        line.store_value_in_metadata(
+            {data.key: data.value for data in line_data.metadata_list}
+        )
     if line_data.quantity_to_update:
         quantity = line_data.quantity
         if quantity > 0:
@@ -281,15 +292,18 @@ def _append_line_to_delete(to_delete, line_data, line):
 def _append_line_to_create(to_create, checkout, variant, line_data, line):
     if line is None:
         if line_data.quantity > 0:
-            to_create.append(
-                CheckoutLine(
-                    checkout=checkout,
-                    variant=variant,
-                    quantity=line_data.quantity,
-                    currency=checkout.currency,
-                    price_override=line_data.custom_price,
-                )
+            checkout_line = CheckoutLine(
+                checkout=checkout,
+                variant=variant,
+                quantity=line_data.quantity,
+                currency=checkout.currency,
+                price_override=line_data.custom_price,
             )
+            if line_data.metadata_list:
+                checkout_line.store_value_in_metadata(
+                    {data.key: data.value for data in line_data.metadata_list}
+                )
+            to_create.append(checkout_line)
 
 
 def _check_new_checkout_address(checkout, address, address_type):
@@ -386,7 +400,7 @@ def _get_shipping_voucher_discount_for_checkout(
             msg = "This offer is not valid in your country."
             raise NotApplicable(msg)
 
-    shipping_price = base_calculations.base_checkout_delivery_price(
+    shipping_price = base_calculations.base_checkout_undiscounted_delivery_price(
         checkout_info=checkout_info, lines=lines
     )
     return voucher.get_discount_amount_for(shipping_price, checkout_info.channel)
@@ -747,7 +761,7 @@ def remove_voucher_from_checkout(checkout: Checkout):
     checkout.voucher_code = None
     checkout.discount_name = None
     checkout.translated_discount_name = None
-    checkout.discount_amount = 0
+    checkout.discount_amount = Decimal("0")
     checkout.save(
         update_fields=[
             "voucher_code",

@@ -15,10 +15,10 @@ from django_prices_vatlayer.utils import (
 )
 from prices import Money, TaxedMoney, TaxedMoneyRange
 
-from ...checkout import base_calculations, calculations
+from ...checkout import base_calculations
 from ...core.prices import quantize_price
-from ...core.taxes import TaxType, zero_money
-from ...discount import VoucherType
+from ...core.taxes import TaxType, zero_money, zero_taxed_money
+from ...discount import OrderDiscountType, VoucherType
 from ...order.interface import OrderTaxedPricesData
 from ...order.utils import (
     get_total_order_discount_excluding_shipping,
@@ -42,15 +42,9 @@ if TYPE_CHECKING:
     from ...account.models import Address
     from ...channel.models import Channel
     from ...checkout.fetch import CheckoutInfo, CheckoutLineInfo
-    from ...checkout.models import Checkout
     from ...discount import DiscountInfo
     from ...order.models import Order, OrderLine
-    from ...product.models import (
-        Collection,
-        Product,
-        ProductVariant,
-        ProductVariantChannelListing,
-    )
+    from ...product.models import Product, ProductVariant
     from ..models import PluginConfiguration
 
 
@@ -179,6 +173,32 @@ class VatlayerPlugin(BasePlugin):
             checkout_info, lines, address, discounts
         )
 
+    def calculate_order_total(
+        self,
+        order: "Order",
+        lines: Iterable["OrderLine"],
+        previous_value: TaxedMoney,
+    ) -> TaxedMoney:
+        if self._skip_plugin(previous_value):
+            return previous_value
+
+        currency = order.currency
+
+        total = zero_taxed_money(currency)
+        undiscounted_subtotal = zero_taxed_money(currency)
+        for line in lines:
+            total += line.total_price
+            undiscounted_subtotal += line.undiscounted_total_price
+        total += order.shipping_price
+
+        # Vatlayer doesn't propagate order discount to shipping we should include
+        # remaining amount in total calculation.
+        order_discount = order.discounts.filter(type=OrderDiscountType.MANUAL).first()
+        if order_discount and order_discount.amount > undiscounted_subtotal.gross:
+            remaining_amount = order_discount.amount - undiscounted_subtotal.gross
+            total -= remaining_amount
+        return max(total, zero_taxed_money(currency))
+
     def _get_taxes_for_country(self, country: Country):
         """Try to fetch cached taxes on the plugin level.
 
@@ -257,24 +277,7 @@ class VatlayerPlugin(BasePlugin):
         if not order.shipping_method:
             return previous_value
 
-        shipping_price = order.shipping_method.channel_listings.get(
-            channel_id=order.channel_id
-        ).price
-
-        if (
-            order.voucher_id
-            and order.voucher.type == VoucherType.SHIPPING  # type: ignore
-        ):
-            shipping_discount = get_voucher_discount_assigned_to_order(order)
-            if shipping_discount:
-                shipping_price = Money(
-                    max(
-                        shipping_price.amount - shipping_discount.amount_value,
-                        Decimal("0"),
-                    ),
-                    shipping_price.currency,
-                )
-        return get_taxed_shipping_price(shipping_price, taxes)
+        return get_taxed_shipping_price(order.base_shipping_price, taxes)
 
     def update_taxes_for_order_lines(
         self,
@@ -347,9 +350,12 @@ class VatlayerPlugin(BasePlugin):
         )
         line.total_price = line.unit_price * line.quantity
         line.undiscounted_total_price = line.undiscounted_unit_price * line.quantity
-        line.tax_rate = (line.unit_price.tax / line.unit_price.net).quantize(
-            Decimal(".0001")
-        )
+        if line.unit_price.net == zero_money(line.currency):
+            line.tax_rate = Decimal("0")
+        else:
+            line.tax_rate = (line.unit_price.tax / line.unit_price.net).quantize(
+                Decimal(".0001")
+            )
 
     def calculate_checkout_line_total(
         self,
@@ -546,10 +552,12 @@ class VatlayerPlugin(BasePlugin):
         if tax_code is None and obj.pk:
             obj.delete_value_from_metadata(self.META_CODE_KEY)
             obj.delete_value_from_metadata(self.META_DESCRIPTION_KEY)
-            return previous_value
-
-        tax_item = {self.META_CODE_KEY: tax_code, self.META_DESCRIPTION_KEY: tax_code}
-        obj.store_value_in_metadata(items=tax_item)
+        elif tax_code is not None:
+            tax_item = {
+                self.META_CODE_KEY: tax_code,
+                self.META_DESCRIPTION_KEY: tax_code,
+            }
+            obj.store_value_in_metadata(items=tax_item)
         return previous_value
 
     def get_tax_code_from_object_meta(

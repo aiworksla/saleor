@@ -6,7 +6,6 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, DefaultDict, Dict, Iterable, List, Optional, Set
 
 import graphene
-from django.contrib.auth.models import AnonymousUser
 from django.db.models import F, QuerySet, Sum
 from django.utils import timezone
 from graphene.utils.str_converters import to_camel_case
@@ -46,7 +45,6 @@ from .serializers import (
     serialize_checkout_lines_for_tax_calculation,
     serialize_product_or_variant_attributes,
 )
-from .utils import get_base_price
 
 if TYPE_CHECKING:
     # pylint: disable=unused-import
@@ -109,7 +107,7 @@ ORDER_PRICE_FIELDS = (
 def generate_requestor(requestor: Optional["RequestorOrLazyObject"] = None):
     if not requestor:
         return {"id": None, "type": None}
-    if isinstance(requestor, (User, AnonymousUser)):
+    if isinstance(requestor, User):
         return {"id": graphene.Node.to_global_id("User", requestor.id), "type": "user"}
     return {"id": requestor.name, "type": "app"}  # type: ignore
 
@@ -131,6 +129,28 @@ def generate_meta(*, requestor_data: Dict[str, Any], camel_case=False, **kwargs)
         meta = meta_result
 
     return meta
+
+
+@traced_payload_generator
+def generate_metadata_updated_payload(
+    instance: Any, requestor: Optional["RequestorOrLazyObject"] = None
+):
+    serializer = PayloadSerializer()
+
+    if isinstance(instance, Checkout):
+        pk_field_name = "token"
+    else:
+        pk_field_name = "id"
+
+    return serializer.serialize(
+        [instance],
+        fields=[],
+        pk_field_name=pk_field_name,
+        extra_dict_data={
+            "meta": generate_meta(requestor_data=generate_requestor(requestor)),
+        },
+        dump_type_name=False,
+    )
 
 
 def prepare_order_lines_allocations_payload(line):
@@ -296,6 +316,7 @@ def generate_order_payload(
     extra_dict_data = {
         "id": graphene.Node.to_global_id("Order", order.id),
         "token": str(order.id),
+        "number": order.number,
         "user_email": order.get_customer_email(),
         "created": order.created_at,
         "original": graphene.Node.to_global_id("Order", order.original_id),
@@ -956,14 +977,41 @@ def generate_page_payload(
     return page_payload
 
 
+def _generate_refund_data_payload(data):
+    data["order_lines_to_refund"] = [
+        {
+            "line_id": graphene.Node.to_global_id("OrderLine", line_data["line"].pk),
+            "quantity": line_data["quantity"],
+            "variant_id": graphene.Node.to_global_id(
+                "ProductVariant", line_data["variant"].pk
+            ),
+        }
+        for line_data in data["order_lines_to_refund"]
+    ]
+    data["fulfillment_lines_to_refund"] = [
+        {
+            "line_id": graphene.Node.to_global_id(
+                "FulfillmentLine", line_data["line"].pk
+            ),
+            "quantity": line_data["quantity"],
+            "replace": line_data["replace"],
+        }
+        for line_data in data["fulfillment_lines_to_refund"]
+    ]
+    return data
+
+
 @traced_payload_generator
 def generate_payment_payload(
     payment_data: "PaymentData", requestor: Optional["RequestorOrLazyObject"] = None
 ):
     data = asdict(payment_data)
+
+    if refund_data := data.get("refund_data"):
+        data["refund_data"] = _generate_refund_data_payload(refund_data)
+
     data["amount"] = quantize_price(data["amount"], data["currency"])
-    payment_app_data = from_payment_app_id(data["gateway"])
-    if payment_app_data:
+    if payment_app_data := from_payment_app_id(data["gateway"]):
         data["payment_method"] = payment_app_data.name
         data["meta"] = generate_meta(requestor_data=generate_requestor(requestor))
     return json.dumps(data, cls=CustomJsonEncoder)
@@ -1311,8 +1359,7 @@ def generate_order_payload_for_tax_calculation(order: "Order"):
     # Prepare shipping data
     shipping_method_name = order.shipping_method_name
     shipping_method_amount = quantize_price(
-        get_base_price(order.shipping_price, included_taxes_in_prices),
-        order.currency,
+        order.base_shipping_price_amount, order.currency
     )
 
     order_data = serializer.serialize(

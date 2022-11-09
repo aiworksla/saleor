@@ -1,9 +1,10 @@
-from urllib.parse import urljoin
+from urllib.parse import unquote, urlparse
 
 import graphene
-from django.conf import settings
+from django.core.files.storage import default_storage
 
 from ....core.tracing import traced_resolver
+from ....core.utils import build_absolute_uri
 from ...account.enums import AddressTypeEnum
 from ..descriptions import ADDED_IN_36, PREVIEW_FEATURE
 from ..enums import (
@@ -339,7 +340,7 @@ class PaymentError(Error):
     code = PaymentErrorCode(description="The error code.", required=True)
     variants = NonNullList(
         graphene.ID,
-        description="List of varint IDs which causes the error.",
+        description="List of variant IDs which causes the error.",
         required=False,
     )
 
@@ -387,6 +388,11 @@ class UploadError(Error):
 
 class WarehouseError(Error):
     code = WarehouseErrorCode(description="The error code.", required=True)
+    shipping_zones = NonNullList(
+        graphene.ID,
+        description="List of shipping zones IDs which causes the error.",
+        required=False,
+    )
 
 
 class WebhookError(Error):
@@ -417,9 +423,10 @@ class Image(graphene.ObjectType):
     class Meta:
         description = "Represents an image."
 
-    @staticmethod
     def resolve_url(root, info):
-        return info.context.build_absolute_uri(urljoin(settings.MEDIA_URL, root.url))
+        if urlparse(root.url).netloc:
+            return root.url
+        return build_absolute_uri(root.url)
 
 
 class File(graphene.ObjectType):
@@ -430,7 +437,11 @@ class File(graphene.ObjectType):
 
     @staticmethod
     def resolve_url(root, info):
-        return info.context.build_absolute_uri(urljoin(settings.MEDIA_URL, root.url))
+        # check if URL is absolute:
+        if urlparse(root.url).netloc:
+            return root.url
+        # unquote used for preventing double URL encoding
+        return build_absolute_uri(default_storage.url(unquote(root.url)))
 
 
 class PriceInput(graphene.InputObjectType):

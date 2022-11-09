@@ -8,7 +8,8 @@ from django_countries import countries
 
 from ....channel.utils import DEPRECATION_WARNING_MESSAGE
 from ....shipping.models import ShippingZone
-from ....warehouse.models import PreorderReservation, Reservation
+from ....warehouse import WarehouseClickAndCollectOption
+from ....warehouse.models import PreorderReservation, Reservation, Stock
 from ...tests.utils import get_graphql_content
 
 COUNTRY_CODE = "US"
@@ -51,6 +52,95 @@ def test_variant_quantity_available_without_country_code_or_channel(
     )
 
 
+def test_variant_quantity_available_without_country_code_stock_only_in_cc_warehouse(
+    api_client, variant, channel_USD, warehouse_for_cc
+):
+    # given
+    quantity = 4
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["quantityAvailable"] == quantity
+
+
+def test_variant_quantity_available_without_country_code_local_cc_warehouse(
+    api_client, variant, channel_USD, warehouse_for_cc, warehouse
+):
+    # given
+    quantity_cc = 7
+    # stock for collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+
+    quantity = 5
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["quantityAvailable"] == quantity_cc
+
+
+def test_variant_quantity_available_without_country_code_global_cc_warehouse(
+    api_client, variant, channel_USD, warehouse_for_cc, warehouse
+):
+    # given
+    quantity_cc = 4
+
+    warehouse_for_cc.click_and_collect_option = (
+        WarehouseClickAndCollectOption.ALL_WAREHOUSES
+    )
+    warehouse_for_cc.save(update_fields=["click_and_collect_option"])
+
+    # stock for collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+
+    quantity = 5
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["quantityAvailable"] == quantity + quantity_cc
+
+
 def test_variant_quantity_available_when_one_stock_is_exceeded(
     api_client, variant_with_many_stocks, channel_USD
 ):
@@ -59,6 +149,8 @@ def test_variant_quantity_available_when_one_stock_is_exceeded(
     stock.quantity = -99
     stock.save()
 
+    stock_2 = variant_with_many_stocks.stocks.last()
+
     variables = {
         "id": graphene.Node.to_global_id("ProductVariant", variant_with_many_stocks.pk),
         "channel": channel_USD.slug,
@@ -66,7 +158,9 @@ def test_variant_quantity_available_when_one_stock_is_exceeded(
     response = api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
     content = get_graphql_content(response)
     variant_data = content["data"]["productVariant"]
-    assert variant_data["quantityAvailable"] == 3
+    assert variant_data["quantityAvailable"] == max(
+        0, stock.quantity + stock_2.quantity
+    )
 
 
 def test_variant_quantity_available_without_country_code_and_no_channel_shipping_zones(
@@ -78,6 +172,104 @@ def test_variant_quantity_available_without_country_code_and_no_channel_shipping
         "channel": channel_USD.slug,
     }
     response = api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["quantityAvailable"] == 0
+
+
+def test_variant_quantity_available_no_country_warehouse_without_zone(
+    api_client, variant_with_many_stocks, channel_USD, channel_PLN
+):
+    """Ensure the warehouse without shipping zones is not counted in variant available
+    quantity."""
+    # given
+    assert variant_with_many_stocks.stocks.count() == 2
+
+    stock_1, stock_2 = variant_with_many_stocks.stocks.all()
+    # clear shipping zones one of variant warehouses
+    stock_2.warehouse.shipping_zones.clear()
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant_with_many_stocks.pk),
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["quantityAvailable"] == stock_1.quantity
+
+
+def test_variant_quantity_available_no_channel_and_no_country_warehouse_without_zone(
+    staff_api_client,
+    variant_with_many_stocks,
+    channel_USD,
+    channel_PLN,
+    permission_manage_products,
+    permission_manage_discounts,
+    permission_manage_orders,
+):
+    """Ensure the warehouse without shipping zones is not counted in variant available
+    quantity."""
+    # given
+    assert variant_with_many_stocks.stocks.count() == 2
+
+    stock_1, stock_2 = variant_with_many_stocks.stocks.all()
+    # clear shipping zones one of variant warehouses
+    stock_2.warehouse.shipping_zones.clear()
+
+    staff_api_client.user.user_permissions.add(
+        permission_manage_products,
+        permission_manage_discounts,
+        permission_manage_orders,
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant_with_many_stocks.pk)
+    }
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["quantityAvailable"] == stock_1.quantity
+
+
+def test_variant_quantity_available_only_warehouse_without_zone_no_channel_no_country(
+    staff_api_client,
+    variant,
+    stock,
+    channel_USD,
+    channel_PLN,
+    permission_manage_products,
+    permission_manage_discounts,
+    permission_manage_orders,
+):
+    """Ensure the quantity available for variant if equal to 0 when there is only one
+    stock with warehouse without any shipping zone assigned.
+    """
+    # given
+    assert variant.stocks.count() == 1
+    # clear shipping zones for variant warehouses
+    stock.warehouse.shipping_zones.clear()
+
+    staff_api_client.user.user_permissions.add(
+        permission_manage_products,
+        permission_manage_discounts,
+        permission_manage_orders,
+    )
+
+    variables = {"id": graphene.Node.to_global_id("ProductVariant", variant.pk)}
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_QUANTITY_AVAILABLE, variables)
+
+    # then
     content = get_graphql_content(response)
     variant_data = content["data"]["productVariant"]
     assert variant_data["quantityAvailable"] == 0
@@ -158,6 +350,190 @@ def test_variant_quantity_available_with_null_as_country_code(
     variant_data = content["data"]["productVariant"]
     assert variant_data["deprecatedByCountry"] == 7
     assert variant_data["byAddress"] == 7
+
+
+def test_variant_quantity_available_with_country_code_only_negative_quantity(
+    api_client,
+    variant,
+    channel_USD,
+    warehouse_for_cc,
+    warehouse,
+):
+    """Ensure the quantity from the collection point without shipping zone is not
+    returned when the country code is given."""
+    # given
+    quantity_cc = 7
+    # stock for local collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+
+    quantity = -5
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+        "address": {"country": COUNTRY_CODE},
+        "country": COUNTRY_CODE,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_VARIANT_AVAILABILITY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["byAddress"] == 0
+    assert variant_data["deprecatedByCountry"] == 0
+
+
+def test_variant_quantity_available_with_country_code_and_cc_warehouse_without_zone(
+    api_client,
+    variant,
+    channel_USD,
+    warehouse_for_cc,
+    warehouse,
+):
+    """Ensure the quantity from the collection point without shipping zone is not
+    returned when the country code is given."""
+    # given
+    quantity_cc = 7
+    # stock for local collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+
+    quantity = 5
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+        "address": {"country": COUNTRY_CODE},
+        "country": COUNTRY_CODE,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_VARIANT_AVAILABILITY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["byAddress"] == quantity
+    assert variant_data["deprecatedByCountry"] == quantity
+
+
+def test_variant_quantity_available_with_country_code_and_local_cc_warehouse_with_zone(
+    api_client, variant, channel_USD, warehouse_for_cc, warehouse, shipping_zone
+):
+    """Ensure the quantity from the local collection point without shipping zone
+    is returned."""
+    # given
+    quantity_cc = 7
+    # stock for local collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+    warehouse_for_cc.shipping_zones.add(shipping_zone)
+
+    quantity = 5
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+        "address": {"country": COUNTRY_CODE},
+        "country": COUNTRY_CODE,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_VARIANT_AVAILABILITY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["byAddress"] == quantity_cc + quantity
+    assert variant_data["deprecatedByCountry"] == quantity + quantity_cc
+
+
+def test_variant_qty_available_with_country_code_and_local_cc_warehouse_negative_qty(
+    api_client, variant, channel_USD, warehouse_for_cc, warehouse, shipping_zone
+):
+    """Ensure the quantity from the local collection point without shipping zone
+    is returned."""
+    # given
+    quantity_cc = 7
+    # stock for local collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+    warehouse_for_cc.shipping_zones.add(shipping_zone)
+
+    quantity = -1
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+        "address": {"country": COUNTRY_CODE},
+        "country": COUNTRY_CODE,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_VARIANT_AVAILABILITY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["byAddress"] == quantity_cc + quantity
+    assert variant_data["deprecatedByCountry"] == quantity + quantity_cc
+
+
+def test_variant_quantity_available_with_country_code_and_global_cc_warehouse(
+    api_client, variant, channel_USD, warehouse_for_cc, shipping_zone, warehouse
+):
+    # given
+    quantity_cc = 7
+    # stock for local collection point warehouse
+    Stock.objects.create(
+        warehouse=warehouse_for_cc, product_variant=variant, quantity=quantity_cc
+    )
+    warehouse_for_cc.shipping_zones.add(shipping_zone)
+
+    quantity = 5
+    # stock for standard warehouse
+    Stock.objects.create(
+        warehouse=warehouse, product_variant=variant, quantity=quantity
+    )
+
+    variables = {
+        "id": graphene.Node.to_global_id("ProductVariant", variant.pk),
+        "channel": channel_USD.slug,
+        "address": {"country": COUNTRY_CODE},
+        "country": COUNTRY_CODE,
+    }
+
+    # when
+    response = api_client.post_graphql(QUERY_VARIANT_AVAILABILITY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    variant_data = content["data"]["productVariant"]
+    assert variant_data["byAddress"] == quantity + quantity_cc
+    assert variant_data["deprecatedByCountry"] == quantity + quantity_cc
 
 
 def test_variant_quantity_available_with_max(

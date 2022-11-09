@@ -6,7 +6,6 @@ from unittest.mock import Mock, patch
 import django_filters
 import graphene
 import pytest
-from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
@@ -249,14 +248,13 @@ def test_validate_image_file():
     img_data = BytesIO()
     image = Image.new("RGB", size=(1, 1))
     image.save(img_data, format="JPEG")
-    img = SimpleUploadedFile("product.jpg", img_data.getvalue(), "image/jpeg")
     field = "image"
 
     # when
-    result = validate_image_file(img, field, ProductErrorCode)
+    img = SimpleUploadedFile("product.jpg", img_data.getvalue(), "image/jpeg")
 
     # then
-    assert not result
+    validate_image_file(img, field, ProductErrorCode)
 
 
 def test_validate_image_file_invalid_content_type():
@@ -368,17 +366,16 @@ def test_validate_image_url_valid_image_response(monkeypatch):
         Mock(return_value=valid_image_response_mock),
     )
     field = "image"
-    dummy_url = "http://example.com/valid_url.jpg"
 
     # when
-    result = validate_image_url(
-        dummy_url,
-        field,
-        ProductErrorCode.INVALID,
-    )
+    dummy_url = "http://example.com/valid_url.jpg"
 
     # then
-    assert result is None
+    validate_image_url(
+        dummy_url,
+        field,
+        ProductErrorCode.INVALID.value,
+    )
 
 
 def test_validate_image_url_invalid_mimetype_response(monkeypatch):
@@ -397,7 +394,7 @@ def test_validate_image_url_invalid_mimetype_response(monkeypatch):
         validate_image_url(
             dummy_url,
             field,
-            ProductErrorCode.INVALID,
+            ProductErrorCode.INVALID.value,
         )
 
     # then
@@ -420,7 +417,7 @@ def test_validate_image_url_response_without_content_headers(monkeypatch):
         validate_image_url(
             dummy_url,
             field,
-            ProductErrorCode.INVALID,
+            ProductErrorCode.INVALID.value,
         )
 
     # then
@@ -447,6 +444,18 @@ def test_filter_range_field(value, count, product_indexes, product_list):
     assert list(result) == expected_products
 
 
+def test_filter_products_with_zero_discount(product_list):
+    product_list[0].channel_listings.update(discounted_price_amount=0)
+    qs = ProductChannelListing.objects.all().order_by("pk")
+    field = "discounted_price_amount"
+
+    result = filter_range_field(qs, field, {"lte": 0, "gte": 0})
+
+    expected_products = list(qs.filter(product=product_list[0]))
+    assert result.count() == 1
+    assert list(result) == expected_products
+
+
 def test_get_duplicated_values():
     values = ("a", "b", "a", 1, 1, 1, 2)
 
@@ -467,12 +476,6 @@ def test_requestor_is_superuser_for_superuser(superuser):
 
 def test_requestor_is_superuser_for_app(app):
     result = requestor_is_superuser(app)
-    assert result is False
-
-
-def test_requestor_is_superuser_for_anonymous_user():
-    user = AnonymousUser()
-    result = requestor_is_superuser(user)
     assert result is False
 
 

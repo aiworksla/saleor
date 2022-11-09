@@ -47,7 +47,6 @@ ADDRESS_DELETED = (
 """
 )
 
-
 APP_INSTALLED = (
     fragments.APP_DETAILS
     + """
@@ -269,6 +268,20 @@ GIFT_CARD_STATUS_CHANGED = (
 """
 )
 
+GIFT_CARD_METADATA_UPDATED = (
+    fragments.GIFT_CARD_DETAILS
+    + """
+    subscription{
+      event{
+        ...on GiftCardMetadataUpdated{
+          giftCard{
+            ...GiftCardDetails
+          }
+        }
+      }
+    }
+"""
+)
 
 VOUCHER_CREATED = (
     fragments.VOUCHER_DETAILS
@@ -341,6 +354,21 @@ VOUCHER_DELETED = (
     subscription{
       event{
         ...on VoucherDeleted{
+          voucher{
+            ...VoucherDetails
+          }
+        }
+      }
+    }
+"""
+)
+
+VOUCHER_METADATA_UPDATED = (
+    fragments.VOUCHER_DETAILS
+    + """
+    subscription{
+      event{
+        ...on VoucherMetadataUpdated{
           voucher{
             ...VoucherDetails
           }
@@ -546,6 +574,25 @@ SHIPPING_ZONE_DELETED = """
     }
 """
 
+SHIPPING_ZONE_METADATA_UPDATED = """
+    subscription{
+      event{
+        ...on ShippingZoneMetadataUpdated{
+          shippingZone{
+            id
+            name
+            countries {
+                code
+            }
+            channels {
+                name
+            }
+          }
+        }
+      }
+    }
+"""
+
 STAFF_CREATED = (
     fragments.STAFF_DETAILS
     + """
@@ -629,6 +676,18 @@ PRODUCT_DELETED = """
     }
 """
 
+PRODUCT_METADATA_UPDATED = """
+    subscription{
+      event{
+        ...on ProductMetadataUpdated{
+          product{
+            id
+          }
+        }
+      }
+    }
+"""
+
 PRODUCT_VARIANT_CREATED = """
     subscription{
       event{
@@ -658,6 +717,18 @@ PRODUCT_VARIANT_DELETED = """
     subscription{
       event{
         ...on ProductVariantDeleted{
+          productVariant{
+            id
+          }
+        }
+      }
+    }
+"""
+
+PRODUCT_VARIANT_METADATA_UPDATED = """
+    subscription{
+      event{
+        ...on ProductVariantMetadataUpdated{
           productVariant{
             id
           }
@@ -754,6 +825,18 @@ ORDER_FULFILLED = """
     subscription{
       event{
         ...on OrderFulfilled{
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+
+ORDER_METADATA_UPDATED = """
+    subscription{
+      event{
+        ...on OrderMetadataUpdated{
           order{
             id
           }
@@ -940,6 +1023,44 @@ FULFILLMENT_CANCELED = (
 """
 )
 
+FULFILLMENT_APPROVED = (
+    fragments.FULFILLMENT_DETAILS
+    + """
+    subscription{
+      event{
+        ...on FulfillmentApproved{
+          fulfillment{
+            ...FulfillmentDetails
+          }
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+)
+
+
+FULFILLMENT_METADATA_UPDATED = (
+    fragments.FULFILLMENT_DETAILS
+    + """
+    subscription{
+      event{
+        ...on FulfillmentMetadataUpdated{
+          fulfillment{
+            ...FulfillmentDetails
+          }
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+)
+
+
 CUSTOMER_CREATED = (
     fragments.CUSTOMER_DETAILS
     + """
@@ -977,6 +1098,22 @@ CUSTOMER_DELETED = (
     subscription{
       event{
         ...on CustomerDeleted{
+          user{
+            ...CustomerDetails
+          }
+        }
+      }
+    }
+"""
+)
+
+
+CUSTOMER_METADATA_UPDATED = (
+    fragments.CUSTOMER_DETAILS
+    + """
+    subscription{
+      event{
+        ...on CustomerMetadataUpdated{
           user{
             ...CustomerDetails
           }
@@ -1034,6 +1171,22 @@ COLLECTION_DELETED = (
 )
 
 
+COLLECTION_METADATA_UPDATED = (
+    fragments.COLLECTION
+    + """
+    subscription{
+      event{
+        ...on CollectionMetadataUpdated{
+          collection(channel: "main"){
+            ...CollectionDetails
+          }
+        }
+      }
+    }
+    """
+)
+
+
 CHECKOUT_CREATED = """
     subscription{
       event{
@@ -1053,6 +1206,18 @@ CHECKOUT_UPDATED = """
     subscription{
       event{
         ...on CheckoutUpdated{
+          checkout{
+            id
+          }
+        }
+      }
+    }
+"""
+
+CHECKOUT_METADATA_UPDATED = """
+    subscription{
+      event{
+        ...on CheckoutMetadataUpdated{
           checkout{
             id
           }
@@ -1196,6 +1361,19 @@ PERMISSION_GROUP_DELETED = (
     }
 """
 )
+
+
+TRANSACTION_ITEM_METADATA_UPDATED = """
+    subscription{
+      event{
+        ...on TransactionItemMetadataUpdated{
+          transaction {
+            id
+          }
+        }
+      }
+    }
+    """
 
 
 MULTIPLE_EVENTS = """
@@ -1553,6 +1731,21 @@ WAREHOUSE_DELETED = (
 """
 )
 
+WAREHOUSE_METADATA_UPDATED = (
+    fragments.WAREHOUSE_DETAILS
+    + """
+    subscription{
+      event{
+        ...on WarehouseMetadataUpdated{
+          warehouse{
+            ...WarehouseDetails
+          }
+        }
+      }
+    }
+"""
+)
+
 PAYMENT_AUTHORIZE = (
     fragments.PAYMENT_DETAILS
     + """
@@ -1785,3 +1978,72 @@ subscription{
   }
 }
 """
+
+
+INVALID_MULTIPLE_EVENTS = """
+    subscription{
+      event{
+        ...on ProductUpdated{
+          product{
+            id
+          }
+        }
+      }
+      event{
+        ...on ProductCreated{
+          product{
+            id
+          }
+        }
+      }
+    }
+"""
+
+INVALID_MULTIPLE_EVENTS_WITH_FRAGMENTS = (
+    fragments.PRODUCT_VARIANT
+    + fragments.CATEGORY_DETAILS
+    + """
+    subscription{
+      event{
+        ...on ProductUpdated{
+          product{
+          variants{
+            ...ProductVariant
+            }
+            ...CategoryDetails
+          }
+        }
+      }
+      event{
+        ...on ProductCreated{
+          product{
+          variants{
+                ...ProductVariant
+            }
+            ...CategoryDetails
+          }
+        }
+      }
+    }
+    """
+)
+
+
+QUERY_WITH_MULTIPLE_FRAGMENTS = (
+    fragments.PRODUCT_VARIANT
+    + fragments.CATEGORY_DETAILS
+    + """
+    subscription{
+      event{
+        ...on ProductUpdated{
+          product{
+          variants{
+            ...ProductVariant
+            }
+            ...CategoryDetails
+          }
+        }
+      }
+    }
+    """
+)

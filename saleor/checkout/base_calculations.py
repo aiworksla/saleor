@@ -14,12 +14,10 @@ from prices import Money, TaxedMoney
 from ..core.prices import quantize_price
 from ..core.taxes import zero_money
 from ..discount import DiscountInfo, VoucherType
-from ..order.interface import OrderTaxedPricesData
 from .fetch import CheckoutInfo, CheckoutLineInfo
 
 if TYPE_CHECKING:
     from ..channel.models import Channel
-    from ..order.models import OrderLine
     from .fetch import ShippingMethodInfo
 
 
@@ -126,16 +124,42 @@ def base_checkout_delivery_price(
     lines: Iterable["CheckoutLineInfo"] = None,
 ) -> Money:
     """Calculate base (untaxed) price for any kind of delivery method."""
+    currency = checkout_info.checkout.currency
+
+    shipping_price = base_checkout_undiscounted_delivery_price(checkout_info, lines)
+
+    is_shipping_voucher = (
+        checkout_info.voucher.type == VoucherType.SHIPPING
+        if checkout_info.voucher
+        else False
+    )
+
+    if is_shipping_voucher:
+        discount = checkout_info.checkout.discount
+        shipping_price = max(zero_money(currency), shipping_price - discount)
+
+    return quantize_price(
+        shipping_price,
+        currency,
+    )
+
+
+def base_checkout_undiscounted_delivery_price(
+    checkout_info: "CheckoutInfo",
+    lines: Iterable["CheckoutLineInfo"] = None,
+) -> Money:
+    """Calculate base (untaxed) undiscounted price for any kind of delivery method."""
     from .fetch import ShippingMethodInfo
 
     delivery_method_info = checkout_info.delivery_method_info
+    currency = checkout_info.checkout.currency
 
-    if isinstance(delivery_method_info, ShippingMethodInfo):
-        return calculate_base_price_for_shipping_method(
-            checkout_info, delivery_method_info, lines
-        )
+    if not isinstance(delivery_method_info, ShippingMethodInfo):
+        return zero_money(currency)
 
-    return zero_money(checkout_info.checkout.currency)
+    return calculate_base_price_for_shipping_method(
+        checkout_info, delivery_method_info, lines
+    )
 
 
 def calculate_base_price_for_shipping_method(
@@ -146,7 +170,6 @@ def calculate_base_price_for_shipping_method(
     """Return checkout shipping price."""
     from .fetch import CheckoutLineInfo
 
-    # FIXME: Optimize checkout.is_shipping_required
     shipping_method = shipping_method_info.delivery_method
 
     if lines is not None and all(isinstance(line, CheckoutLineInfo) for line in lines):
@@ -192,9 +215,7 @@ def base_checkout_total(
     )
     # Discount is subtracted from both gross and net values, which may cause negative
     # net value if we are having a discount that covers whole price.
-    if is_shipping_voucher:
-        shipping_price = max(zero_money(currency), shipping_price - discount)
-    else:
+    if not is_shipping_voucher:
         subtotal = max(zero_money(currency), subtotal - discount)
     return subtotal + shipping_price
 
@@ -215,24 +236,6 @@ def base_checkout_subtotal(
     ]
 
     return sum(line_totals, zero_money(currency))
-
-
-def base_order_line_total(order_line: "OrderLine") -> OrderTaxedPricesData:
-    quantity = order_line.quantity
-    price_with_discounts = (
-        TaxedMoney(order_line.base_unit_price, order_line.base_unit_price) * quantity
-    )
-    undiscounted_price = (
-        TaxedMoney(
-            order_line.undiscounted_base_unit_price,
-            order_line.undiscounted_base_unit_price,
-        )
-        * quantity
-    )
-    return OrderTaxedPricesData(
-        undiscounted_price=undiscounted_price,
-        price_with_discounts=price_with_discounts,
-    )
 
 
 def base_tax_rate(price: TaxedMoney):

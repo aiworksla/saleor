@@ -11,7 +11,7 @@ from ....checkout import calculations
 from ....checkout.fetch import fetch_checkout_info, fetch_checkout_lines
 from ....checkout.utils import add_variant_to_checkout
 from ....core.prices import quantize_price
-from ....core.taxes import zero_taxed_money
+from ....core.taxes import zero_money, zero_taxed_money
 from ....discount import DiscountValueType, OrderDiscountType
 from ....product.models import Product
 from ...manager import get_plugins_manager
@@ -182,6 +182,66 @@ def test_apply_tax_to_price_no_taxes_return_taxed_money_range():
 def test_apply_tax_to_price_no_taxes_raise_typeerror_for_invalid_type():
     with pytest.raises(TypeError):
         assert apply_tax_to_price(None, "standard", 100)
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_assign_tax_code_to_object_meta(vatlayer, product):
+    # given
+    manager = get_plugins_manager()
+    tax_code = "standard"
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {
+        VatlayerPlugin.META_CODE_KEY: tax_code,
+        VatlayerPlugin.META_DESCRIPTION_KEY: tax_code,
+    }
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_assign_tax_code_to_object_meta_none_as_tax_code(vatlayer, product):
+    # given
+    manager = get_plugins_manager()
+    tax_code = None
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {}
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_assign_tax_code_to_object_meta_no_obj_id_and_none_as_tax_code(vatlayer):
+    # given
+    manager = get_plugins_manager()
+    product = Product(name="A new product.")
+    tax_code = None
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {}
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_assign_tax_code_to_object_meta_no_obj_id(vatlayer):
+    # given
+    manager = get_plugins_manager()
+    product = Product(name="A new product.")
+    tax_code = "standard"
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {
+        VatlayerPlugin.META_CODE_KEY: tax_code,
+        VatlayerPlugin.META_DESCRIPTION_KEY: tax_code,
+    }
 
 
 @pytest.mark.parametrize(
@@ -489,6 +549,198 @@ def test_calculate_checkout_subtotal_with_excluded_country(
 
 
 @override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total(vatlayer, order_with_lines):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = order.lines.all()
+    order.shipping_price = manager.calculate_order_shipping(order)
+    lines = manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("65.04", "USD"), gross=Money("80.00", "USD"))
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total_voucher(vatlayer, order_with_lines):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = list(order.lines.all())
+    discount_amount = 10
+    order.discounts.create(
+        type=OrderDiscountType.VOUCHER,
+        value_type=DiscountValueType.FIXED,
+        value=discount_amount,
+        name="Voucher",
+        translated_name="VoucherPL",
+        currency=order.currency,
+        amount_value=10,
+    )
+    order.shipping_price = manager.calculate_order_shipping(order)
+    manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("56.92", "USD"), gross=Money("70.01", "USD"))
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total_with_manual_discount(
+    vatlayer, order_with_lines
+):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = list(order.lines.all())
+    order.discounts.create(
+        type=OrderDiscountType.MANUAL,
+        value_type=DiscountValueType.FIXED,
+        value=10,
+        name="StaffDiscount",
+        translated_name="StaffDiscountPL",
+        currency=order.currency,
+        amount_value=10,
+    )
+    order.shipping_price = manager.calculate_order_shipping(order)
+    manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("56.92", "USD"), gross=Money("70.01", "USD"))
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total_with_discount_for_order_total(
+    vatlayer, order_with_lines
+):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = list(order.lines.all())
+    order.discounts.create(
+        type=OrderDiscountType.MANUAL,
+        value_type=DiscountValueType.FIXED,
+        value=80,
+        name="StaffDiscount",
+        translated_name="StaffDiscountPL",
+        currency=order.currency,
+        amount_value=80,
+    )
+    order.shipping_price = manager.calculate_order_shipping(order)
+    manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("0", "USD"), gross=Money("0", "USD"))
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total_with_discount_for_subtotal_and_shipping(
+    vatlayer, order_with_lines
+):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = list(order.lines.all())
+    order.discounts.create(
+        type=OrderDiscountType.MANUAL,
+        value_type=DiscountValueType.FIXED,
+        value=75,
+        name="StaffDiscount",
+        translated_name="StaffDiscountPL",
+        currency=order.currency,
+        amount_value=75,
+    )
+    order.shipping_price = manager.calculate_order_shipping(order)
+    manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("3.13", "USD"), gross=Money("5.00", "USD"))
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total_with_discount_for_more_than_order_total(
+    vatlayer, order_with_lines
+):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = list(order.lines.all())
+    order.discounts.create(
+        type=OrderDiscountType.MANUAL,
+        value_type=DiscountValueType.FIXED,
+        value=100,
+        name="StaffDiscount",
+        translated_name="StaffDiscountPL",
+        currency=order.currency,
+        amount_value=100,
+    )
+    order.shipping_price = manager.calculate_order_shipping(order)
+    manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("0", "USD"), gross=Money("0", "USD"))
+
+
+@override_settings(PLUGINS=["saleor.plugins.vatlayer.plugin.VatlayerPlugin"])
+def test_calculations_calculate_order_total_with_manual_discount_and_voucher(
+    vatlayer, order_with_lines
+):
+    # given
+    manager = get_plugins_manager()
+    order = order_with_lines
+    lines = list(order.lines.all())
+    order.discounts.create(
+        type=OrderDiscountType.MANUAL,
+        value_type=DiscountValueType.FIXED,
+        value=10,
+        name="StaffDiscount",
+        translated_name="StaffDiscountPL",
+        currency=order.currency,
+        amount_value=10,
+    )
+    order.discounts.create(
+        type=OrderDiscountType.VOUCHER,
+        value_type=DiscountValueType.FIXED,
+        value=10,
+        name="Voucher",
+        translated_name="VoucherPL",
+        currency=order.currency,
+        amount_value=10,
+    )
+    order.shipping_price = manager.calculate_order_shipping(order)
+    manager.update_taxes_for_order_lines(order, lines)
+
+    # when
+    total = manager.calculate_order_total(order, lines)
+    total = quantize_price(total, total.currency)
+
+    # then
+    assert total == TaxedMoney(net=Money("48.77", "USD"), gross=Money("60.00", "USD"))
+
+
 def test_calculate_order_shipping(vatlayer, order_line, shipping_zone, site_settings):
     manager = get_plugins_manager()
     order = order_line.order
@@ -496,6 +748,7 @@ def test_calculate_order_shipping(vatlayer, order_line, shipping_zone, site_sett
     order.shipping_address = order.billing_address.get_copy()
     order.shipping_method_name = method.name
     order.shipping_method = method
+    order.base_shipping_price = method.channel_listings.get(channel=order.channel).price
     order.save()
     price = manager.calculate_order_shipping(order)
     price = quantize_price(price, price.currency)
@@ -514,6 +767,7 @@ def test_calculate_order_shipping_from_origin_country(
     method = shipping_zone.shipping_methods.get()
     order.shipping_address = order.billing_address.get_copy()
     order.shipping_method_name = method.name
+    order.base_shipping_price = method.channel_listings.get(channel=order.channel).price
     order.shipping_method = method
     order.save()
 
@@ -538,6 +792,7 @@ def test_calculate_order_shipping_with_excluded_country(
     order.shipping_address = order.billing_address.get_copy()
     order.shipping_method_name = method.name
     order.shipping_method = method
+    order.base_shipping_price = method.channel_listings.get(channel=order.channel).price
     order.save()
 
     price = manager.calculate_order_shipping(order)
@@ -565,15 +820,19 @@ def test_calculate_order_shipping_voucher_on_shipping(
     # given
     manager = get_plugins_manager()
     order = order_line.order
+    currency = order.currency
+    discount_amount = Decimal("5.0")
+
     method = shipping_zone.shipping_methods.get()
     order.shipping_address = order.billing_address.get_copy()
     order.shipping_method_name = method.name
     order.shipping_method = method
+    order.base_shipping_price = method.channel_listings.get(
+        channel=order.channel
+    ).price - Money(discount_amount, currency)
     order.voucher = voucher_shipping_type
     order.save()
 
-    currency = order.currency
-    discount_amount = Decimal("5.0")
     order.discounts.create(
         type=OrderDiscountType.VOUCHER,
         value_type=DiscountValueType.FIXED,
@@ -611,6 +870,7 @@ def test_calculate_order_shipping_free_shipping_voucher(
     order.shipping_address = order.billing_address.get_copy()
     order.shipping_method_name = method.name
     order.shipping_method = method
+    order.base_shipping_price = zero_money(order.currency)
     order.voucher = voucher_shipping_type
     order.save()
 
@@ -1463,7 +1723,7 @@ def test_calculations_checkout_shipping_price_with_vatlayer(
     )
 
 
-def test_skip_diabled_plugin(settings, channel_USD):
+def test_skip_disabled_plugin(settings, channel_USD):
     settings.PLUGINS = ["saleor.plugins.vatlayer.plugin.VatlayerPlugin"]
     manager = get_plugins_manager()
     plugin: VatlayerPlugin = manager.get_plugin(

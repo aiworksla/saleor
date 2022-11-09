@@ -16,6 +16,7 @@ from ...channel.mutations import BaseChannelListingMutation
 from ...core.scalars import PositiveDecimal
 from ...core.types import NonNullList, ShippingError
 from ...core.validators import validate_decimal_max_value, validate_price_precision
+from ...plugins.dataloaders import load_plugin_manager
 from ...shipping.utils import get_shipping_model_by_object_id
 from ..types import ShippingMethodType
 
@@ -108,10 +109,13 @@ class ShippingMethodChannelListingUpdate(BaseChannelListingMutation):
         )
 
     @classmethod
-    @traced_atomic_transaction()
     def save(cls, info, shipping_method: "ShippingMethodModel", cleaned_input: Dict):
-        cls.add_channels(shipping_method, cleaned_input.get("add_channels", []))
-        cls.remove_channels(shipping_method, cleaned_input.get("remove_channels", []))
+        # transaction ensures consistent channels data
+        with traced_atomic_transaction():
+            cls.add_channels(shipping_method, cleaned_input.get("add_channels", []))
+            cls.remove_channels(
+                shipping_method, cleaned_input.get("remove_channels", [])
+            )
 
     @classmethod
     def get_shipping_method_channel_listing_to_update(
@@ -162,11 +166,12 @@ class ShippingMethodChannelListingUpdate(BaseChannelListingMutation):
                         )
                     )
 
-            min_price = channel_input.pop("minimum_order_price", None)
-            max_price = channel_input.pop("maximum_order_price", None)
-
-            if min_price is not None:
+            min_price = None
+            max_price = None
+            if "minimum_order_price" in channel_input:
+                min_price = channel_input.pop("minimum_order_price")
                 channel_input["minimum_order_price_amount"] = min_price
+            if min_price is not None:
                 try:
                     validate_price_precision(
                         min_price, channel_input["channel"].currency_code
@@ -179,8 +184,10 @@ class ShippingMethodChannelListingUpdate(BaseChannelListingMutation):
                     }
                     errors["minimum_order_price"].append(error)
 
-            if max_price is not None:
+            if "maximum_order_price" in channel_input:
+                max_price = channel_input.pop("maximum_order_price")
                 channel_input["maximum_order_price_amount"] = max_price
+            if max_price is not None:
                 try:
                     validate_price_precision(
                         max_price, channel_input["channel"].currency_code
@@ -248,7 +255,8 @@ class ShippingMethodChannelListingUpdate(BaseChannelListingMutation):
             raise ValidationError(errors)
 
         cls.save(info, shipping_method, cleaned_input)
-        info.context.plugins.shipping_price_updated(shipping_method)
+        manager = load_plugin_manager(info.context)
+        cls.call_event(manager.shipping_price_updated, shipping_method)
 
         return ShippingMethodChannelListingUpdate(
             shipping_method=ChannelContext(node=shipping_method, channel_slug=None)

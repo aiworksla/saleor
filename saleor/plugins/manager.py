@@ -31,6 +31,7 @@ from ..core.payments import PaymentInterface
 from ..core.prices import quantize_price
 from ..core.taxes import TaxData, TaxType, zero_money, zero_taxed_money
 from ..discount import DiscountInfo
+from ..order import base_calculations as base_order_calculations
 from ..order.interface import OrderTaxedPricesData
 from .base_plugin import ExcludedShippingMethod, ExternalAccessTokens
 from .models import PluginConfiguration
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
         TokenConfig,
         TransactionActionData,
     )
+    from ..payment.models import TransactionItem
     from ..product.models import (
         Category,
         Collection,
@@ -267,7 +269,7 @@ class PluginsManager(PaymentInterface):
         total = sum(line_totals, zero_taxed_money(currency))
         return quantize_price(
             total,
-            checkout_info.checkout.currency,
+            currency,
         )
 
     def calculate_checkout_shipping(
@@ -292,15 +294,33 @@ class PluginsManager(PaymentInterface):
             checkout_info.checkout.currency,
         )
 
+    def calculate_order_total(
+        self,
+        order: "Order",
+        lines: Iterable["OrderLine"],
+    ) -> TaxedMoney:
+        currency = order.currency
+        default_value = base_order_calculations.base_order_total(order, lines)
+        default_value = TaxedMoney(default_value, default_value)
+        if default_value <= zero_taxed_money(currency):
+            return quantize_price(
+                default_value,
+                currency,
+            )
+
+        return quantize_price(
+            self.__run_method_on_plugins(
+                "calculate_order_total",
+                default_value,
+                order,
+                lines,
+                channel_slug=order.channel.slug,
+            ),
+            currency,
+        )
+
     def calculate_order_shipping(self, order: "Order") -> TaxedMoney:
-        if not order.shipping_method:
-            return zero_taxed_money(order.currency)
-        channel_listing = order.shipping_method.channel_listings.filter(
-            channel_id=order.channel_id
-        ).first()
-        if not channel_listing:
-            return zero_taxed_money(order.currency)
-        shipping_price = channel_listing.price
+        shipping_price = order.base_shipping_price
         default_value = quantize_price(
             TaxedMoney(net=shipping_price, gross=shipping_price),
             shipping_price.currency,
@@ -353,6 +373,7 @@ class PluginsManager(PaymentInterface):
             lines,
             order,
             lines,
+            channel_slug=order.channel.slug,
         )
         return lines
 
@@ -380,8 +401,8 @@ class PluginsManager(PaymentInterface):
             discounts,
             channel_slug=checkout_info.channel.slug,
         )
-        currency = checkout_info.checkout.currency
-        return quantize_price(line_total, currency)
+
+        return quantize_price(line_total, checkout_info.checkout.currency)
 
     def calculate_order_line_total(
         self,
@@ -390,7 +411,9 @@ class PluginsManager(PaymentInterface):
         variant: "ProductVariant",
         product: "Product",
     ) -> OrderTaxedPricesData:
-        default_value = base_calculations.base_order_line_total(order_line)
+        default_value = base_order_calculations.base_order_line_total(order_line)
+        currency = order_line.currency
+
         line_total = self.__run_method_on_plugins(
             "calculate_order_line_total",
             default_value,
@@ -400,7 +423,7 @@ class PluginsManager(PaymentInterface):
             product,
             channel_slug=order.channel.slug,
         )
-        currency = order_line.currency
+
         line_total.price_with_discounts = quantize_price(
             line_total.price_with_discounts, currency
         )
@@ -431,8 +454,7 @@ class PluginsManager(PaymentInterface):
             discounts,
             channel_slug=checkout_info.channel.slug,
         )
-        currency = checkout_info.checkout.currency
-        return quantize_price(unit_price, currency)
+        return quantize_price(unit_price, checkout_info.checkout.currency)
 
     def calculate_order_line_unit(
         self,
@@ -519,12 +541,15 @@ class PluginsManager(PaymentInterface):
 
     def get_taxes_for_checkout(self, checkout_info, lines) -> Optional[TaxData]:
         return self.__run_plugin_method_until_first_success(
-            "get_taxes_for_checkout", checkout_info, lines
+            "get_taxes_for_checkout",
+            checkout_info,
+            lines,
+            channel_slug=checkout_info.channel.slug,
         )
 
     def get_taxes_for_order(self, order: "Order") -> Optional[TaxData]:
         return self.__run_plugin_method_until_first_success(
-            "get_taxes_for_order", order
+            "get_taxes_for_order", order, channel_slug=order.channel.slug
         )
 
     def apply_taxes_to_product(
@@ -573,6 +598,12 @@ class PluginsManager(PaymentInterface):
         default_value = None
         return self.__run_method_on_plugins("customer_updated", default_value, customer)
 
+    def customer_metadata_updated(self, customer: "User"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "customer_metadata_updated", default_value, customer
+        )
+
     def collection_created(self, collection: "Collection"):
         default_value = None
         return self.__run_method_on_plugins(
@@ -591,6 +622,12 @@ class PluginsManager(PaymentInterface):
             "collection_deleted", default_value, collection
         )
 
+    def collection_metadata_updated(self, collection: "Collection"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "collection_metadata_updated", default_value, collection
+        )
+
     def product_created(self, product: "Product"):
         default_value = None
         return self.__run_method_on_plugins("product_created", default_value, product)
@@ -603,6 +640,12 @@ class PluginsManager(PaymentInterface):
         default_value = None
         return self.__run_method_on_plugins(
             "product_deleted", default_value, product, variants
+        )
+
+    def product_metadata_updated(self, product: "Product"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "product_metadata_updated", default_value, product
         )
 
     def product_variant_created(self, product_variant: "ProductVariant"):
@@ -635,6 +678,12 @@ class PluginsManager(PaymentInterface):
         default_value = None
         self.__run_method_on_plugins(
             "product_variant_back_in_stock", default_value, stock
+        )
+
+    def product_variant_metadata_updated(self, product_variant: "ProductVariant"):
+        default_value = None
+        self.__run_method_on_plugins(
+            "product_variant_metadata_updated", default_value, product_variant
         )
 
     def order_created(self, order: "Order"):
@@ -755,6 +804,12 @@ class PluginsManager(PaymentInterface):
             "order_fulfilled", default_value, order, channel_slug=order.channel.slug
         )
 
+    def order_metadata_updated(self, order: "Order"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "order_metadata_updated", default_value, order
+        )
+
     def fulfillment_created(self, fulfillment: "Fulfillment"):
         default_value = None
         return self.__run_method_on_plugins(
@@ -771,6 +826,21 @@ class PluginsManager(PaymentInterface):
             default_value,
             fulfillment,
             channel_slug=fulfillment.order.channel.slug,
+        )
+
+    def fulfillment_approved(self, fulfillment: "Fulfillment"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "fulfillment_approved",
+            default_value,
+            fulfillment,
+            channel_slug=fulfillment.order.channel.slug,
+        )
+
+    def fulfillment_metadata_updated(self, fulfillment: "Fulfillment"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "fulfillment_metadata_updated", default_value, fulfillment
         )
 
     def tracking_number_updated(self, fulfillment: "Fulfillment"):
@@ -798,6 +868,12 @@ class PluginsManager(PaymentInterface):
             default_value,
             checkout,
             channel_slug=checkout.channel.slug,
+        )
+
+    def checkout_metadata_updated(self, checkout: "Checkout"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "checkout_metadata_updated", default_value, checkout
         )
 
     def page_created(self, page: "Page"):
@@ -857,6 +933,12 @@ class PluginsManager(PaymentInterface):
             default_value,
             payment_data,
             channel_slug=channel_slug,
+        )
+
+    def transaction_item_metadata_updated(self, transaction_item: "TransactionItem"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "transaction_item_metadata_updated", default_value, transaction_item
         )
 
     def address_created(self, address: "Address"):
@@ -977,6 +1059,12 @@ class PluginsManager(PaymentInterface):
             "gift_card_status_changed", default_value, gift_card
         )
 
+    def gift_card_metadata_updated(self, gift_card: "GiftCard"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "gift_card_metadata_updated", default_value, gift_card
+        )
+
     def menu_created(self, menu: "Menu"):
         default_value = None
         return self.__run_method_on_plugins("menu_created", default_value, menu)
@@ -1043,6 +1131,12 @@ class PluginsManager(PaymentInterface):
             "shipping_zone_deleted", default_value, shipping_zone
         )
 
+    def shipping_zone_metadata_updated(self, shipping_zone: "ShippingZone"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "shipping_zone_metadata_updated", default_value, shipping_zone
+        )
+
     def staff_created(self, staff_user: "User"):
         default_value = None
         return self.__run_method_on_plugins("staff_created", default_value, staff_user)
@@ -1073,6 +1167,12 @@ class PluginsManager(PaymentInterface):
             "warehouse_deleted", default_value, warehouse
         )
 
+    def warehouse_metadata_updated(self, warehouse: "Warehouse"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "warehouse_metadata_updated", default_value, warehouse
+        )
+
     def voucher_created(self, voucher: "Voucher"):
         default_value = None
         return self.__run_method_on_plugins("voucher_created", default_value, voucher)
@@ -1084,6 +1184,12 @@ class PluginsManager(PaymentInterface):
     def voucher_deleted(self, voucher: "Voucher"):
         default_value = None
         return self.__run_method_on_plugins("voucher_deleted", default_value, voucher)
+
+    def voucher_metadata_updated(self, voucher: "Voucher"):
+        default_value = None
+        return self.__run_method_on_plugins(
+            "voucher_metadata_updated", default_value, voucher
+        )
 
     def initialize_payment(
         self, gateway, payment_data: dict, channel_slug: str
@@ -1309,8 +1415,9 @@ class PluginsManager(PaymentInterface):
         self,
         method_name: str,
         *args,
+        channel_slug: Optional[str] = None,
     ):
-        plugins = self.get_plugins()
+        plugins = self.get_plugins(channel_slug=channel_slug)
         for plugin in plugins:
             result = self.__run_method_on_single_plugin(
                 plugin, method_name, None, *args
@@ -1532,6 +1639,7 @@ class PluginsManager(PaymentInterface):
             [],
             order,
             available_shipping_methods,
+            channel_slug=order.channel.slug,
         )
 
     def excluded_shipping_methods_for_checkout(
@@ -1544,6 +1652,7 @@ class PluginsManager(PaymentInterface):
             [],
             checkout,
             available_shipping_methods,
+            channel_slug=checkout.channel.slug,
         )
 
     def perform_mutation(

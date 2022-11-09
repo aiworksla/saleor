@@ -22,9 +22,9 @@ from ..account.utils import check_is_owner_or_has_one_of_perms
 from ..app.dataloaders import AppByIdLoader
 from ..app.types import App
 from ..checkout.dataloaders import CheckoutByUserAndChannelLoader, CheckoutByUserLoader
-from ..checkout.types import Checkout
+from ..checkout.types import Checkout, CheckoutCountableConnection
 from ..core.connection import CountableConnection, create_connection_slice
-from ..core.descriptions import DEPRECATED_IN_3X_FIELD
+from ..core.descriptions import ADDED_IN_38, DEPRECATED_IN_3X_FIELD
 from ..core.enums import LanguageCodeEnum
 from ..core.federation import federated_entity, resolve_federation_references
 from ..core.fields import ConnectionField, PermissionsField
@@ -245,7 +245,9 @@ class User(ModelObjectType):
     last_name = graphene.String(required=True)
     is_staff = graphene.Boolean(required=True)
     is_active = graphene.Boolean(required=True)
-    addresses = NonNullList(Address, description="List of all user's addresses.")
+    addresses = NonNullList(
+        Address, description="List of all user's addresses.", required=True
+    )
     checkout = graphene.Field(
         Checkout,
         description="Returns the last open checkout of this user.",
@@ -265,6 +267,13 @@ class User(ModelObjectType):
     checkout_ids = NonNullList(
         graphene.ID,
         description="Returns the checkout ID's assigned to this user.",
+        channel=graphene.String(
+            description="Slug of a channel for which the data should be returned."
+        ),
+    )
+    checkouts = ConnectionField(
+        CheckoutCountableConnection,
+        description="Returns checkouts assigned to this user." + ADDED_IN_38,
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."
         ),
@@ -380,6 +389,21 @@ class User(ModelObjectType):
         )
 
     @staticmethod
+    def resolve_checkouts(root: models.User, info, **kwargs):
+        def _resolve_checkouts(checkouts):
+            return create_connection_slice(
+                checkouts, info, kwargs, CheckoutCountableConnection
+            )
+
+        if channel := kwargs.get("channel"):
+            return (
+                CheckoutByUserAndChannelLoader(info.context)
+                .load((root.id, channel))
+                .then(_resolve_checkouts)
+            )
+        return CheckoutByUserLoader(info.context).load(root.id).then(_resolve_checkouts)
+
+    @staticmethod
     def resolve_gift_cards(root: models.User, info, **kwargs):
         from ..giftcard.types import GiftCardCountableConnection
 
@@ -452,7 +476,7 @@ class User(ModelObjectType):
         size = get_thumbnail_size(size)
 
         def _resolve_avatar(thumbnail):
-            url = get_image_or_proxy_url(thumbnail, root.id, "User", size, format)
+            url = get_image_or_proxy_url(thumbnail, root.uuid, "User", size, format)
             return Image(url=url, alt=None)
 
         return (
@@ -619,7 +643,7 @@ class Group(ModelObjectType):
         from .resolvers import resolve_permission_groups
 
         requestor = get_user_or_app_from_context(info.context)
-        if not requestor.has_perm(AccountPermissions.MANAGE_STAFF):
+        if not requestor or not requestor.has_perm(AccountPermissions.MANAGE_STAFF):
             qs = auth_models.Group.objects.none()
         else:
             qs = resolve_permission_groups(info)

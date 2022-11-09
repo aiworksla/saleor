@@ -9,6 +9,7 @@ from django.test import override_settings
 from prices import Money, TaxedMoney
 from requests import RequestException
 
+from ....account.models import Address
 from ....checkout.fetch import (
     CheckoutInfo,
     fetch_checkout_info,
@@ -18,7 +19,7 @@ from ....checkout.fetch import (
 )
 from ....checkout.utils import add_variant_to_checkout
 from ....core.prices import quantize_price
-from ....core.taxes import TaxError, TaxType, zero_taxed_money
+from ....core.taxes import TaxError, TaxType, zero_money, zero_taxed_money
 from ....discount import DiscountValueType, OrderDiscountType, VoucherType
 from ....order import OrderStatus
 from ....product import ProductTypeKind
@@ -33,12 +34,14 @@ from .. import (
     AvataxConfiguration,
     TransactionType,
     _validate_adddress_details,
+    _validate_checkout,
     _validate_order,
     api_get_request,
     api_post_request,
     generate_request_data_from_checkout,
     get_cached_tax_codes_or_fetch,
     get_checkout_lines_data,
+    get_checkout_tax_data,
     get_order_lines_data,
     get_order_request_data,
     get_order_tax_data,
@@ -52,7 +55,7 @@ def avatax_config():
     return AvataxConfiguration(
         username_or_account="test",
         password_or_license="test",
-        use_sandbox=False,
+        use_sandbox=True,
         from_street_address="Tęczowa 7",
         from_city="WROCŁAW",
         from_country_area="",
@@ -915,6 +918,7 @@ def test_calculate_order_shipping_order_not_valid(
         net=Money("10.00", "USD"), gross=Money("10.00", "USD")
     )
     order.shipping_address = None
+    order.base_shipping_price = Money("10.00", "USD")
     order.shipping_method = shipping_method
     order.save()
 
@@ -938,8 +942,8 @@ def test_calculate_order_shipping_order_not_valid(
     "with_discount, expected_net, expected_gross, voucher_amount, taxes_in_prices",
     [
         (True, "22.32", "26.99", "0.0", True),
-        (True, "21.99", "26.46", "5.0", False),
-        (False, "41.99", "51.05", "0.0", False),
+        (True, "21.99", "26.73", "5.0", False),
+        (False, "41.99", "51.19", "0.0", False),
         (False, "32.04", "38.99", "3.0", True),
     ],
 )
@@ -1006,8 +1010,8 @@ def test_calculate_checkout_total_uses_default_calculation(
     "with_discount, expected_net, expected_gross, voucher_amount, taxes_in_prices",
     [
         (True, "22.32", "26.99", "0.0", True),
-        (True, "21.99", "26.46", "5.0", False),
-        (False, "41.99", "51.05", "0.0", False),
+        (True, "21.99", "26.73", "5.0", False),
+        (False, "41.99", "51.19", "0.0", False),
         (False, "32.04", "38.99", "3.0", True),
     ],
 )
@@ -1703,6 +1707,28 @@ def test_calculate_order_shipping(
 
 @pytest.mark.vcr
 @override_settings(PLUGINS=["saleor.plugins.avatax.plugin.AvataxPlugin"])
+def test_calculate_order_total(
+    order_line, shipping_zone, site_settings, address, plugin_configuration
+):
+    plugin_configuration()
+    manager = get_plugins_manager()
+    order = order_line.order
+    method = shipping_zone.shipping_methods.get()
+    order.shipping_address = order.billing_address.get_copy()
+    order.shipping_method_name = method.name
+    order.shipping_method = method
+    order.save()
+
+    site_settings.company_address = address
+    site_settings.save()
+
+    price = manager.calculate_order_total(order, order.lines.all())
+    price = quantize_price(price, price.currency)
+    assert price == TaxedMoney(net=Money("38.13", "USD"), gross=Money("46.90", "USD"))
+
+
+@pytest.mark.vcr
+@override_settings(PLUGINS=["saleor.plugins.avatax.plugin.AvataxPlugin"])
 def test_calculate_order_shipping_entire_order_voucher(
     order_line, shipping_zone, voucher, site_settings, address, plugin_configuration
 ):
@@ -1904,6 +1930,33 @@ def test_calculate_order_shipping_no_channel_listing(
     site_settings.save()
 
     price = manager.calculate_order_shipping(order)
+    price = quantize_price(price, price.currency)
+    assert price == zero_taxed_money(order.currency)
+
+
+@pytest.mark.vcr
+@override_settings(PLUGINS=["saleor.plugins.avatax.plugin.AvataxPlugin"])
+def test_calculate_order_shipping_not_shippable_order(
+    order_line, site_settings, address, plugin_configuration
+):
+    # given
+    plugin_configuration()
+    manager = get_plugins_manager()
+
+    order_line.is_shipping_required = False
+    order_line.save(update_fields=["is_shipping_required"])
+
+    order = order_line.order
+    order.shipping_address = order.billing_address.get_copy()
+    order.save(update_fields=["shipping_address"])
+
+    site_settings.company_address = address
+    site_settings.save(update_fields=["company_address"])
+
+    # when
+    price = manager.calculate_order_shipping(order)
+
+    # then
     price = quantize_price(price, price.currency)
     assert price == zero_taxed_money(order.currency)
 
@@ -2559,8 +2612,153 @@ def test_checkout_needs_new_fetch(checkout_with_item, address, shipping_method):
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout_with_item)
     checkout_info = fetch_checkout_info(checkout_with_item, lines, [], manager)
-    checkout_data = generate_request_data_from_checkout(checkout_info, lines, config)
+    checkout_data = generate_request_data_from_checkout(
+        checkout_info, lines, config, tax_included=True
+    )
     assert taxes_need_new_fetch(checkout_data, None)
+
+
+def test_generate_request_data_from_checkout_for_cc(
+    checkout_with_item,
+    address,
+    address_other_country,
+    warehouse,
+):
+    # given
+    warehouse.address = address_other_country
+    warehouse.is_private = False
+    warehouse.save()
+
+    checkout_with_item.shipping_address = address
+    checkout_with_item.collection_point = warehouse
+    checkout_with_item.save()
+
+    config = AvataxConfiguration(
+        username_or_account="wrong_data",
+        password_or_license="wrong_data",
+        from_street_address="Tęczowa 7",
+        from_city="WROCŁAW",
+        from_country_area="",
+        from_postal_code="53-601",
+        from_country="PL",
+    )
+    manager = get_plugins_manager()
+    lines, _ = fetch_checkout_lines(checkout_with_item)
+    checkout_info = fetch_checkout_info(checkout_with_item, lines, [], manager)
+
+    # when
+    request_data = generate_request_data_from_checkout(
+        checkout_info, lines, config, tax_included=True
+    )
+
+    # then
+    expected_address_data = address_other_country.as_data()
+    addresses = request_data["createTransactionModel"]["addresses"]
+    assert "shipTo" in addresses
+    assert "shipFrom" in addresses
+    assert addresses["shipTo"] == {
+        "line1": expected_address_data.get("street_address_1"),
+        "line2": expected_address_data.get("street_address_2"),
+        "city": expected_address_data.get("city"),
+        "region": expected_address_data.get("country_area"),
+        "country": expected_address_data.get("country"),
+        "postalCode": expected_address_data.get("postal_code"),
+    }
+
+
+def test_generate_request_data_from_checkout_for_cc_and_single_location(
+    checkout_with_item,
+    address,
+    address_other_country,
+    warehouse,
+):
+    # given
+    warehouse.address = address_other_country
+    warehouse.is_private = False
+    warehouse.save()
+
+    checkout_with_item.shipping_address = address
+    checkout_with_item.collection_point = warehouse
+    checkout_with_item.save()
+
+    address_data = address_other_country.as_data()
+    config = AvataxConfiguration(
+        username_or_account="",
+        password_or_license="",
+        use_sandbox=False,
+        from_street_address=address_data.get("street_address_1"),
+        from_city=address_data.get("city"),
+        from_postal_code=address_data.get("postal_code"),
+        from_country=address_data.get("country"),
+    )
+
+    manager = get_plugins_manager()
+    lines, _ = fetch_checkout_lines(checkout_with_item)
+    checkout_info = fetch_checkout_info(checkout_with_item, lines, [], manager)
+
+    # when
+    request_data = generate_request_data_from_checkout(
+        checkout_info, lines, config, tax_included=True
+    )
+
+    # then
+    addresses = request_data["createTransactionModel"]["addresses"]
+    assert "shipTo" not in addresses
+    assert "shipFrom" not in addresses
+    assert addresses["singleLocation"] == {
+        "line1": address_data.get("street_address_1"),
+        "line2": address_data.get("street_address_2"),
+        "city": address_data.get("city"),
+        "region": address_data.get("country_area"),
+        "country": address_data.get("country"),
+        "postalCode": address_data.get("postal_code"),
+    }
+
+
+@pytest.mark.vcr
+@patch("saleor.plugins.avatax.cache.set")
+def test_get_checkout_tax_data_with_single_point(
+    mock_cache_set,
+    checkout_with_item,
+    warehouse,
+):
+    # given
+    address = Address.objects.create(
+        street_address_1="4371 Lucas Knoll Apt. 791",
+        city="BENNETTMOUTH",
+        postal_code="53-601",
+        country="PL",
+    )
+    warehouse.address = address
+    warehouse.is_private = False
+    warehouse.save()
+
+    checkout_with_item.collection_point = warehouse
+    checkout_with_item.save()
+
+    address_data = warehouse.address.as_data()
+
+    config = AvataxConfiguration(
+        username_or_account="",
+        password_or_license="",
+        use_sandbox=True,
+        from_street_address=address_data.get("street_address_1"),
+        from_city=address_data.get("city"),
+        from_postal_code=address_data.get("postal_code"),
+        from_country=address_data.get("country"),
+    )
+
+    manager = get_plugins_manager()
+    lines, _ = fetch_checkout_lines(checkout_with_item)
+    checkout_info = fetch_checkout_info(checkout_with_item, lines, [], manager)
+
+    # when
+    response = get_checkout_tax_data(
+        checkout_info, lines, tax_included=True, discounts=[], config=config
+    )
+
+    # then
+    assert len(response.get("addresses", [])) == 1
 
 
 def test_taxes_need_new_fetch_uses_cached_data(checkout_with_item, address):
@@ -2578,7 +2776,9 @@ def test_taxes_need_new_fetch_uses_cached_data(checkout_with_item, address):
     manager = get_plugins_manager()
     lines, _ = fetch_checkout_lines(checkout_with_item)
     checkout_info = fetch_checkout_info(checkout_with_item, lines, [], manager)
-    checkout_data = generate_request_data_from_checkout(checkout_info, lines, config)
+    checkout_data = generate_request_data_from_checkout(
+        checkout_info, lines, config, tax_included=True
+    )
     assert not taxes_need_new_fetch(checkout_data, (checkout_data, None))
 
 
@@ -2614,7 +2814,8 @@ def test_get_checkout_line_tax_rate(
             convert_to_shipping_method_data(
                 delivery_method,
                 delivery_method.channel_listings.first(),
-            )
+            ),
+            address,
         ),
         shipping_address=address,
         billing_address=None,
@@ -2746,7 +2947,8 @@ def test_get_checkout_line_tax_rate_for_product_type_with_non_taxable_product(
             convert_to_shipping_method_data(
                 delivery_method,
                 delivery_method.channel_listings.first(),
-            )
+            ),
+            address,
         ),
         shipping_address=address,
         billing_address=None,
@@ -2775,7 +2977,6 @@ def test_get_checkout_line_tax_rate_for_product_type_with_non_taxable_product(
         )
         for checkout_line_info in lines
     ]
-
     # then
     assert tax_rates[0] == Decimal("0.23")
     assert tax_rates[1] == Decimal("0.0")
@@ -2968,24 +3169,9 @@ def test_get_checkout_shipping_tax_rate(
     checkout_with_item.shipping_address = address
     checkout_with_item.shipping_method = shipping_zone.shipping_methods.get()
     checkout_with_item.save(update_fields=["shipping_address", "shipping_method"])
-    delivery_method = checkout_with_item.shipping_method
 
     lines, _ = fetch_checkout_lines(checkout_with_item)
-    checkout_info = CheckoutInfo(
-        checkout=checkout_with_item,
-        delivery_method_info=get_delivery_method_info(
-            convert_to_shipping_method_data(
-                delivery_method,
-                delivery_method.channel_listings.first(),
-            )
-        ),
-        shipping_address=address,
-        billing_address=None,
-        channel=checkout_with_item.channel,
-        user=None,
-        valid_pick_up_points=[],
-        all_shipping_methods=[],
-    )
+    checkout_info = fetch_checkout_info(checkout_with_item, lines, [], manager)
 
     # when
     tax_rate = manager.get_checkout_shipping_tax_rate(
@@ -3319,12 +3505,14 @@ def test_show_taxes_on_storefront(plugin_configuration):
 
 @patch("saleor.plugins.avatax.plugin.api_post_request_task.delay")
 @override_settings(PLUGINS=["saleor.plugins.avatax.plugin.AvataxPlugin"])
-def test_order_created(api_post_request_task_mock, order, plugin_configuration):
+def test_order_created(
+    api_post_request_task_mock, order, order_line, plugin_configuration
+):
     # given
     plugin_conf = plugin_configuration(
         from_street_address="Tęczowa 7",
         from_city="WROCŁAW",
-        from_postal_code="53-601",
+        from_postal_code="53-603",
         from_country="PL",
         shipping_tax_code="FR00001",
     )
@@ -3341,7 +3529,17 @@ def test_order_created(api_post_request_task_mock, order, plugin_configuration):
         "createTransactionModel": {
             "companyCode": conf["Company name"],
             "type": TransactionType.INVOICE,
-            "lines": [],
+            "lines": [
+                {
+                    "amount": str(round(order_line.total_price.gross.amount, 3)),
+                    "description": order_line.variant.product.name,
+                    "discounted": False,
+                    "itemCode": order_line.variant.sku,
+                    "quantity": order_line.quantity,
+                    "taxCode": DEFAULT_TAX_CODE,
+                    "taxIncluded": True,
+                }
+            ],
             "code": str(order.id),
             "date": datetime.date.today().strftime("%Y-%m-%d"),
             "customerCode": 0,
@@ -3349,11 +3547,11 @@ def test_order_created(api_post_request_task_mock, order, plugin_configuration):
             "addresses": {
                 "shipFrom": {
                     "line1": "Tęczowa 7",
-                    "line2": None,
+                    "line2": "",
                     "city": "WROCŁAW",
                     "region": "",
                     "country": "PL",
-                    "postalCode": "53-601",
+                    "postalCode": "53-603",
                 },
                 "shipTo": {
                     "line1": address.street_address_1,
@@ -3382,14 +3580,32 @@ def test_order_created(api_post_request_task_mock, order, plugin_configuration):
         "from_country": conf["from_country"],
         "from_country_area": conf["from_country_area"],
         "shipping_tax_code": conf["shipping_tax_code"],
+        "override_global_tax": conf["override_global_tax"],
+        "include_taxes_in_prices": conf["include_taxes_in_prices"],
     }
 
     api_post_request_task_mock.assert_called_once_with(
-        "https://rest.avatax.com/api/v2/transactions/createoradjust",
+        "https://sandbox-rest.avatax.com/api/v2/transactions/createoradjust",
         expected_request_data,
         conf_data,
         order.pk,
     )
+
+
+@patch("saleor.plugins.avatax.plugin.api_post_request_task.delay")
+@override_settings(PLUGINS=["saleor.plugins.avatax.plugin.AvataxPlugin"])
+def test_order_created_no_lines(
+    api_post_request_task_mock, order, plugin_configuration
+):
+    """Ensure that when order has no lines, the request to avatax api is not sent."""
+    # given
+    manager = get_plugins_manager()
+
+    # when
+    manager.order_created(order)
+
+    # then
+    api_post_request_task_mock.assert_not_called()
 
 
 @pytest.mark.vcr
@@ -3405,9 +3621,7 @@ def test_plugin_uses_configuration_from_db(
     settings,
 ):
     settings.PLUGINS = ["saleor.plugins.avatax.plugin.AvataxPlugin"]
-    configuration = plugin_configuration(
-        username="test", password="test", sandbox=False
-    )
+    configuration = plugin_configuration(username="test", password="test", sandbox=True)
     manager = get_plugins_manager()
 
     monkeypatch.setattr(
@@ -3547,10 +3761,112 @@ def test_get_order_request_data_checks_when_taxes_are_included_to_price(
         from_postal_code="53-601",
         from_country="PL",
     )
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
     lines_data = request_data["createTransactionModel"]["lines"]
 
     assert all([line for line in lines_data if line["taxIncluded"] is True])
+
+
+def test_get_order_request_data_uses_correct_address_for_cc(
+    order_with_lines,
+    site_settings,
+    address,
+    address_other_country,
+    warehouse,
+):
+    # given
+    site_settings.include_taxes_in_prices = True
+    site_settings.company_address = address
+    site_settings.save()
+
+    warehouse.is_private = False
+    warehouse.address = address_other_country
+    warehouse.save()
+
+    order_with_lines.collection_point = warehouse
+    order_with_lines.shipping_address = order_with_lines.billing_address.get_copy()
+    order_with_lines.shipping_method_name = None
+    order_with_lines.shipping_method = None
+    order_with_lines.save()
+
+    config = AvataxConfiguration(
+        username_or_account="",
+        password_or_license="",
+        use_sandbox=False,
+        from_street_address="Tęczowa 7",
+        from_city="WROCŁAW",
+        from_country_area="",
+        from_postal_code="53-601",
+        from_country="PL",
+    )
+
+    # when
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
+
+    # then
+    expected_address_data = address_other_country.as_data()
+    addresses = request_data["createTransactionModel"]["addresses"]
+    assert "shipFrom" in addresses
+    assert "shipTo" in addresses
+    assert addresses["shipTo"] == {
+        "line1": expected_address_data.get("street_address_1"),
+        "line2": expected_address_data.get("street_address_2"),
+        "city": expected_address_data.get("city"),
+        "region": expected_address_data.get("country_area"),
+        "country": expected_address_data.get("country"),
+        "postalCode": expected_address_data.get("postal_code"),
+    }
+
+
+def test_get_order_request_data_uses_correct_address_for_cc_with_single_location(
+    order_with_lines,
+    site_settings,
+    address,
+    address_other_country,
+    warehouse,
+):
+    # given
+    site_settings.include_taxes_in_prices = True
+    site_settings.company_address = address
+    site_settings.save()
+
+    warehouse.is_private = False
+    warehouse.address = address_other_country
+    warehouse.save()
+
+    order_with_lines.collection_point = warehouse
+    order_with_lines.shipping_address = order_with_lines.billing_address.get_copy()
+    order_with_lines.shipping_method_name = None
+    order_with_lines.shipping_method = None
+    order_with_lines.save()
+
+    address_data = address_other_country.as_data()
+
+    config = AvataxConfiguration(
+        username_or_account="",
+        password_or_license="",
+        use_sandbox=False,
+        from_street_address=address_data.get("street_address_1"),
+        from_city=address_data.get("city"),
+        from_postal_code=address_data.get("postal_code"),
+        from_country=address_data.get("country"),
+    )
+    # when
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
+
+    # then
+    addresses = request_data["createTransactionModel"]["addresses"]
+    assert "shipFrom" not in addresses
+    assert "shipTo" not in addresses
+    assert "singleLocation" in addresses
+    assert addresses["singleLocation"] == {
+        "line1": address_data.get("street_address_1"),
+        "line2": "",
+        "city": address_data.get("city"),
+        "region": address_data.get("country_area"),
+        "country": address_data.get("country"),
+        "postalCode": address_data.get("postal_code"),
+    }
 
 
 def test_get_order_request_data_for_line_with_already_included_taxes_in_price(
@@ -3588,7 +3904,9 @@ def test_get_order_request_data_for_line_with_already_included_taxes_in_price(
     )
 
     # when
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(
+        order_with_lines, config, tax_included=include_taxes_in_prices
+    )
 
     # then
     lines_data = request_data["createTransactionModel"]["lines"]
@@ -3610,7 +3928,6 @@ def test_get_order_request_data_for_line_with_already_included_taxes_in_price(
 def test_get_order_request_data_confirmed_order_with_voucher(
     order_with_lines, shipping_zone, site_settings, address, voucher
 ):
-    site_settings.include_taxes_in_prices = True
     site_settings.company_address = address
     site_settings.save()
     method = shipping_zone.shipping_methods.get()
@@ -3650,7 +3967,7 @@ def test_get_order_request_data_confirmed_order_with_voucher(
         from_postal_code="53-601",
         from_country="PL",
     )
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
     lines_data = request_data["createTransactionModel"]["lines"]
 
     # extra one from shipping data
@@ -3697,7 +4014,7 @@ def test_get_order_request_data_confirmed_order_with_sale(
         from_postal_code="53-601",
         from_country="PL",
     )
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
     lines_data = request_data["createTransactionModel"]["lines"]
 
     # extra one from shipping data
@@ -3751,7 +4068,7 @@ def test_get_order_request_data_draft_order_with_voucher(
     )
 
     # when
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
 
     # then
     lines_data = request_data["createTransactionModel"]["lines"]
@@ -3792,11 +4109,13 @@ def test_get_order_request_data_draft_order_with_shipping_voucher(
     order_with_lines.shipping_address = order_with_lines.billing_address.get_copy()
     order_with_lines.shipping_method_name = method.name
     order_with_lines.shipping_method = method
+    order_with_lines.base_shipping_price = zero_money(order_with_lines.currency)
     order_with_lines.voucher = voucher_free_shipping
     order_with_lines.save(
         update_fields=[
             "status",
             "voucher",
+            "base_shipping_price_amount",
             "shipping_address",
             "shipping_method_name",
             "shipping_method",
@@ -3815,18 +4134,15 @@ def test_get_order_request_data_draft_order_with_shipping_voucher(
     )
 
     # when
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
 
     # then
     lines_data = request_data["createTransactionModel"]["lines"]
 
-    # lines + shipping
-    assert len(lines_data) == order_with_lines.lines.count() + 1
-    for line_data in lines_data[:-1]:
+    # only lines, shipping is not added as after discount shipping price is 0
+    assert len(lines_data) == order_with_lines.lines.count()
+    for line_data in lines_data:
         assert line_data["discounted"] is False
-    # shipping line shouldn't be discounted
-    assert lines_data[-1]["discounted"] is False
-    assert Decimal(lines_data[-1]["amount"]) == Decimal("0")
 
 
 def test_get_order_request_data_draft_order_shipping_voucher_amount_too_high(
@@ -3835,7 +4151,6 @@ def test_get_order_request_data_draft_order_shipping_voucher_amount_too_high(
     """Ensure that when order has shipping voucher with price bigger than shipping
     price, the shipping price will not be negative."""
     # given
-    site_settings.include_taxes_in_prices = True
     site_settings.company_address = address
     site_settings.save()
     method = shipping_zone.shipping_methods.get()
@@ -3858,11 +4173,13 @@ def test_get_order_request_data_draft_order_shipping_voucher_amount_too_high(
     order_with_lines.shipping_address = order_with_lines.billing_address.get_copy()
     order_with_lines.shipping_method_name = method.name
     order_with_lines.shipping_method = method
+    order_with_lines.base_shipping_price = zero_money(order_with_lines.currency)
     order_with_lines.voucher = voucher_free_shipping
     order_with_lines.save(
         update_fields=[
             "status",
             "voucher",
+            "base_shipping_price_amount",
             "shipping_address",
             "shipping_method_name",
             "shipping_method",
@@ -3881,18 +4198,15 @@ def test_get_order_request_data_draft_order_shipping_voucher_amount_too_high(
     )
 
     # when
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
 
     # then
     lines_data = request_data["createTransactionModel"]["lines"]
 
-    # lines + shipping
-    assert len(lines_data) == order_with_lines.lines.count() + 1
+    # only lines, shipping is not added as after discount shipping price is 0
+    assert len(lines_data) == order_with_lines.lines.count()
     for line_data in lines_data[:-1]:
         assert line_data["discounted"] is False
-    # shipping line shouldn't be discounted
-    assert lines_data[-1]["discounted"] is False
-    assert Decimal(lines_data[-1]["amount"]) == Decimal("0")
 
 
 def test_get_order_request_data_draft_order_with_sale(
@@ -3935,7 +4249,7 @@ def test_get_order_request_data_draft_order_with_sale(
     )
 
     # when
-    request_data = get_order_request_data(order_with_lines, config)
+    request_data = get_order_request_data(order_with_lines, config, tax_included=True)
 
     # then
     lines_data = request_data["createTransactionModel"]["lines"]
@@ -3959,11 +4273,66 @@ def test_get_order_tax_data(
     get_cached_response_or_fetch_mock.return_value = return_value
 
     # when
-    response = get_order_tax_data(order, conf)
+    response = get_order_tax_data(order, conf, tax_included=True)
 
     # then
-    get_order_request_data_mock.assert_called_once_with(order, conf)
+    get_order_request_data_mock.assert_called_once_with(order, conf, True)
     assert response == return_value
+
+
+@pytest.mark.vcr
+@patch("saleor.plugins.avatax.cache.set")
+def test_get_order_tax_data_with_single_location(
+    mock_cache_set,
+    order_line,
+    warehouse,
+):
+    # given
+    address = Address.objects.create(
+        street_address_1="4371 Lucas Knoll Apt. 791",
+        city="BENNETTMOUTH",
+        postal_code="53-601",
+        country="PL",
+    )
+    warehouse.address = address
+    warehouse.is_private = False
+    warehouse.save()
+
+    order = order_line.order
+    order.collection_point = warehouse
+    order.save()
+
+    address_data = warehouse.address.as_data()
+
+    config = AvataxConfiguration(
+        username_or_account="",
+        password_or_license="",
+        use_sandbox=True,
+        from_street_address=address_data.get("street_address_1"),
+        from_city=address_data.get("city"),
+        from_postal_code=address_data.get("postal_code"),
+        from_country=address_data.get("country"),
+    )
+
+    # when
+    response = get_order_tax_data(order, config, tax_included=True)
+
+    # then
+    assert len(response.get("addresses", [])) == 1
+
+
+def test_get_order_tax_data_empty_data(
+    order,
+    plugin_configuration,
+):
+    # given
+    conf = plugin_configuration()
+
+    # when
+    response = get_order_tax_data(order, conf, tax_included=True)
+
+    # then
+    assert response is None
 
 
 @patch("saleor.plugins.avatax.get_order_request_data")
@@ -3982,7 +4351,7 @@ def test_get_order_tax_data_raised_error(
 
     # when
     with pytest.raises(TaxError) as e:
-        get_order_tax_data(order, conf)
+        get_order_tax_data(order, conf, tax_included=True)
 
     # then
     assert e._excinfo[1].args[0] == return_value["error"]
@@ -4049,6 +4418,61 @@ def test_validate_order_not_shipping_required_no_shipping_method(order_line, add
     assert response is True
 
 
+def test_validate_order_click_and_collect(order_line, address, warehouse):
+    # given
+    warehouse.is_private = False
+    warehouse.save(update_fields=["is_private"])
+    order = order_line.order
+    order.collection_point = warehouse
+    order.shipping_method = None
+    order.shipping_address = None
+    order.billing_address = address
+    order.save(
+        update_fields=[
+            "shipping_address",
+            "billing_address",
+            "shipping_method",
+            "collection_point",
+        ]
+    )
+
+    # when
+    response = _validate_order(order)
+
+    # then
+    assert response is True
+
+
+def test_validate_checkout_click_and_collect(
+    user_checkout_with_items_for_cc, address, warehouse
+):
+    # given
+    warehouse.is_private = False
+    warehouse.save(update_fields=["is_private"])
+    user_checkout_with_items_for_cc.collection_point = warehouse
+    user_checkout_with_items_for_cc.shipping_method = None
+    user_checkout_with_items_for_cc.shipping_address = None
+    user_checkout_with_items_for_cc.billing_address = address
+    user_checkout_with_items_for_cc.save(
+        update_fields=[
+            "shipping_address",
+            "billing_address",
+            "shipping_method",
+            "collection_point",
+        ]
+    )
+    lines_info, _ = fetch_checkout_lines(user_checkout_with_items_for_cc)
+    checkout_info = fetch_checkout_info(
+        user_checkout_with_items_for_cc, lines_info, [], get_plugins_manager()
+    )
+
+    # when
+    response = _validate_checkout(checkout_info, lines_info)
+
+    # then
+    assert response is True
+
+
 def test_get_checkout_lines_data_sets_different_tax_code_for_zero_amount(
     settings, channel_USD, plugin_configuration, checkout_with_item, avatax_config
 ):
@@ -4072,7 +4496,9 @@ def test_get_checkout_lines_data_sets_different_tax_code_for_zero_amount(
     config = avatax_config
 
     # when
-    lines_data = get_checkout_lines_data(checkout_info, lines, config)
+    lines_data = get_checkout_lines_data(
+        checkout_info, lines, config, tax_included=True
+    )
 
     # then
     assert lines_data[0]["amount"] == "0.00"
@@ -4105,7 +4531,9 @@ def test_get_checkout_lines_data_sets_different_tax_code_only_for_zero_amount(
     config = avatax_config
 
     # when
-    lines_data = get_checkout_lines_data(checkout_info, lines, config)
+    lines_data = get_checkout_lines_data(
+        checkout_info, lines, config, tax_included=True
+    )
 
     # then
     assert lines_data[0]["amount"] == "11.00"
@@ -4146,7 +4574,9 @@ def test_get_checkout_lines_data_with_collection_point(
     config = avatax_config
 
     # when
-    lines_data = get_checkout_lines_data(checkout_info, lines, config)
+    lines_data = get_checkout_lines_data(
+        checkout_info, lines, config, tax_included=True
+    )
 
     # then
     assert len(lines_data) == checkout_with_item.lines.count()
@@ -4186,7 +4616,9 @@ def test_get_checkout_lines_data_with_shipping_method(
     config = avatax_config
 
     # when
-    lines_data = get_checkout_lines_data(checkout_info, lines, config)
+    lines_data = get_checkout_lines_data(
+        checkout_info, lines, config, tax_included=True
+    )
 
     # then
     assert len(lines_data) == checkout_with_item.lines.count() + 1
@@ -4227,7 +4659,9 @@ def test_get_order_lines_data_sets_different_tax_code_for_zero_amount(
     )
 
     # when
-    lines_data = get_order_lines_data(order_with_lines, config, discounted=False)
+    lines_data = get_order_lines_data(
+        order_with_lines, config, tax_included=True, discounted=False
+    )
 
     # then
     assert lines_data[0]["amount"] == "0.000"
@@ -4269,7 +4703,7 @@ def test_get_order_lines_data_with_discounted(
     )
 
     # when
-    lines_data = get_order_lines_data(order, config, discounted=True)
+    lines_data = get_order_lines_data(order, config, tax_included=True, discounted=True)
 
     # then
     assert len(lines_data) == 1
@@ -4305,8 +4739,149 @@ def test_get_order_lines_data_sets_different_tax_code_only_for_zero_amount(
     config = avatax_config
 
     # when
-    lines_data = get_order_lines_data(order_with_lines, config, discounted=False)
+    lines_data = get_order_lines_data(
+        order_with_lines, config, tax_included=True, discounted=False
+    )
 
     # then
     assert lines_data[0]["amount"] == "10.000"
     assert lines_data[0]["taxCode"] == "taxcode"
+
+
+def test_assign_tax_code_to_object_meta(
+    settings, channel_USD, plugin_configuration, product, monkeypatch
+):
+    # given
+    settings.PLUGINS = ["saleor.plugins.avatax.plugin.AvataxPlugin"]
+    plugin_configuration(channel=channel_USD)
+
+    tax_code = "standard"
+    description = "desc"
+
+    monkeypatch.setattr(
+        "saleor.plugins.avatax.plugin.get_cached_tax_codes_or_fetch",
+        lambda _: {tax_code: description},
+    )
+
+    manager = get_plugins_manager()
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {
+        META_CODE_KEY: tax_code,
+        META_DESCRIPTION_KEY: description,
+    }
+
+
+def test_assign_tax_code_to_object_meta_none_as_tax_code(
+    settings, channel_USD, plugin_configuration, product, monkeypatch
+):
+    # given
+    settings.PLUGINS = ["saleor.plugins.avatax.plugin.AvataxPlugin"]
+    plugin_configuration(channel=channel_USD)
+
+    tax_code = None
+    description = "desc"
+
+    monkeypatch.setattr(
+        "saleor.plugins.avatax.plugin.get_cached_tax_codes_or_fetch",
+        lambda _: {"standard": description},
+    )
+    manager = get_plugins_manager()
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {}
+
+
+def test_assign_tax_code_to_object_meta_no_obj_id_and_none_as_tax_code(
+    settings, channel_USD, plugin_configuration, monkeypatch
+):
+    # given
+    settings.PLUGINS = ["saleor.plugins.avatax.plugin.AvataxPlugin"]
+    plugin_configuration(channel=channel_USD)
+
+    tax_code = None
+    description = "desc"
+
+    monkeypatch.setattr(
+        "saleor.plugins.avatax.plugin.get_cached_tax_codes_or_fetch",
+        lambda _: {"standard": description},
+    )
+
+    product = Product(name="A new product.")
+    manager = get_plugins_manager()
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {}
+
+
+def test_assign_tax_code_to_object_meta_no_obj_id(
+    settings, channel_USD, plugin_configuration, monkeypatch
+):
+    # given
+    settings.PLUGINS = ["saleor.plugins.avatax.plugin.AvataxPlugin"]
+    plugin_configuration(channel=channel_USD)
+
+    tax_code = "standard"
+    description = "desc"
+
+    monkeypatch.setattr(
+        "saleor.plugins.avatax.plugin.get_cached_tax_codes_or_fetch",
+        lambda _: {tax_code: description},
+    )
+    product = Product(name="A new product.")
+    manager = get_plugins_manager()
+
+    # when
+    manager.assign_tax_code_to_object_meta(product, tax_code)
+
+    # then
+    assert product.metadata == {
+        META_CODE_KEY: tax_code,
+        META_DESCRIPTION_KEY: description,
+    }
+
+
+@pytest.mark.parametrize(
+    "global_include_taxes_in_prices, override_global_tax, "
+    "include_taxes_in_prices, expected_tax_included",
+    [(True, False, False, True), (True, True, True, True), (True, True, False, False)],
+)
+@patch("saleor.plugins.avatax.plugin.api_post_request_task.delay")
+@override_settings(PLUGINS=["saleor.plugins.avatax.plugin.AvataxPlugin"])
+def test_plugin_tax_override_setting(
+    api_post_request_task_mock,
+    global_include_taxes_in_prices,
+    override_global_tax,
+    include_taxes_in_prices,
+    expected_tax_included,
+    site_settings,
+    order_line,
+    plugin_configuration,
+):
+    # given
+    site_settings.include_taxes_in_prices = global_include_taxes_in_prices
+    site_settings.save()
+
+    plugin_configuration(
+        override_global_tax=override_global_tax,
+        include_taxes_in_prices=include_taxes_in_prices,
+    )
+
+    manager = get_plugins_manager()
+
+    # when
+    manager.order_created(order_line.order)
+
+    # then
+    transaction = api_post_request_task_mock.call_args[0][1]["createTransactionModel"]
+    transaction_line = transaction["lines"][0]
+    assert transaction_line["taxIncluded"] == expected_tax_included
