@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from unittest.mock import ANY, patch
 
+import before_after
 import graphene
 import pytest
 import pytz
@@ -287,10 +288,25 @@ def test_checkout_complete(
     assert order.total_authorized == zero_money(order.currency)
 
     order_line = order.lines.first()
+    line_tax_class = order_line.tax_class
+    shipping_tax_class = shipping_method.tax_class
+
     assert checkout_line_quantity == order_line.quantity
     assert checkout_line_variant == order_line.variant
+
+    assert order_line.tax_class == line_tax_class
+    assert order_line.tax_class_name == line_tax_class.name
+    assert order_line.tax_class_metadata == line_tax_class.metadata
+    assert order_line.tax_class_private_metadata == line_tax_class.private_metadata
+
     assert order.shipping_address == address
     assert order.shipping_method == checkout.shipping_method
+    assert order.shipping_tax_rate is not None
+    assert order.shipping_tax_class_name == shipping_tax_class.name
+    assert order.shipping_tax_class_metadata == shipping_tax_class.metadata
+    assert (
+        order.shipping_tax_class_private_metadata == shipping_tax_class.private_metadata
+    )
     assert order.payments.exists()
     assert order.search_vector
     order_payment = order.payments.first()
@@ -3307,3 +3323,76 @@ def test_checkout_complete_reservations_drop(
     data = content["data"]["checkoutComplete"]
     assert not data["errors"]
     assert not len(Reservation.objects.all())
+
+
+@pytest.mark.django_db(transaction=True)
+def test_checkout_complete_payment_create_create_run_in_meantime(
+    site_settings,
+    user_api_client,
+    checkout_without_shipping_required,
+    gift_card,
+    payment_dummy,
+    address,
+    shipping_method,
+):
+    # given
+    checkout = checkout_without_shipping_required
+    checkout.shipping_address = address
+    checkout.shipping_method = shipping_method
+    checkout.billing_address = address
+    checkout.store_value_in_metadata(items={"accepted": "true"})
+    checkout.store_value_in_private_metadata(items={"accepted": "false"})
+    checkout.save()
+
+    manager = get_plugins_manager()
+    lines, _ = fetch_checkout_lines(checkout)
+    checkout_info = fetch_checkout_info(checkout, lines, [], manager)
+    total = calculations.calculate_checkout_total_with_gift_cards(
+        manager, checkout_info, lines, address
+    )
+    site_settings.automatically_confirm_all_new_orders = True
+    site_settings.save()
+    payment = payment_dummy
+    payment.is_active = True
+    payment.order = None
+    payment.total = total.gross.amount
+    payment.currency = total.gross.currency
+    payment.checkout = checkout
+    payment.save()
+    assert not payment.transactions.exists()
+
+    redirect_url = "https://www.example.com"
+    variables = {"id": to_global_id_or_none(checkout), "redirectUrl": redirect_url}
+
+    # Call CheckoutPaymentCreate mutation during the CheckoutComplete call processing.
+    # It should cause deactivation of current payment and creation of new one.
+    def call_payment_create_mutation(*args, **kwargs):
+        from ....payment.tests.mutations.test_checkout_payment_create import (
+            CREATE_PAYMENT_MUTATION,
+            DUMMY_GATEWAY,
+        )
+
+        variables = {
+            "id": to_global_id_or_none(checkout),
+            "input": {
+                "gateway": DUMMY_GATEWAY,
+                "token": "sample-token",
+                "amount": total.gross.amount,
+            },
+        }
+
+        user_api_client.post_graphql(CREATE_PAYMENT_MUTATION, variables)
+
+    # when
+    with before_after.before(
+        "saleor.checkout.complete_checkout._get_order_data",
+        call_payment_create_mutation,
+    ):
+        response = user_api_client.post_graphql(MUTATION_CHECKOUT_COMPLETE, variables)
+
+    # then
+    content = get_graphql_content(response)
+    data = content["data"]["checkoutComplete"]
+    errors = data["errors"]
+    assert len(errors) == 1
+    assert errors[0]["code"] == CheckoutErrorCode.INACTIVE_PAYMENT.name
