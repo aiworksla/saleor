@@ -11,7 +11,8 @@ from ....order.utils import (
     invalidate_order_prices,
     recalculate_order_weight,
 )
-from ...app.dataloaders import load_app
+from ...app.dataloaders import get_app_promise
+from ...core import ResolveInfo
 from ...core.mutations import BaseMutation
 from ...core.types import OrderError
 from ...plugins.dataloaders import get_plugin_manager_promise
@@ -35,7 +36,9 @@ class OrderLineDelete(EditableOrderValidationMixin, BaseMutation):
         error_type_field = "order_errors"
 
     @classmethod
-    def perform_mutation(cls, _root, info, id):
+    def perform_mutation(  # type: ignore[override]
+        cls, _root, info: ResolveInfo, /, *, id
+    ):
         manager = get_plugin_manager_promise(info.context).get()
         line = cls.get_node_or_error(
             info,
@@ -75,7 +78,7 @@ class OrderLineDelete(EditableOrderValidationMixin, BaseMutation):
                     "updated_at",
                 ]
             # Create the removal event
-            app = load_app(info.context)
+            app = get_app_promise(info.context).get()
             events.order_removed_products_event(
                 order=order,
                 user=info.context.user,

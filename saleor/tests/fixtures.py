@@ -13,7 +13,6 @@ import graphene
 import pytest
 import pytz
 from django.conf import settings
-from django.contrib.auth.models import Group, Permission
 from django.contrib.sites.models import Site
 from django.core.files import File
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -27,7 +26,7 @@ from freezegun import freeze_time
 from PIL import Image
 from prices import Money, TaxedMoney, fixed_discount
 
-from ..account.models import Address, StaffNotificationRecipient, User
+from ..account.models import Address, Group, StaffNotificationRecipient, User
 from ..app.models import App, AppExtension, AppInstallation
 from ..app.types import AppExtensionMount, AppType
 from ..attribute import AttributeEntityType, AttributeInputType, AttributeType
@@ -39,7 +38,7 @@ from ..attribute.models import (
 )
 from ..attribute.utils import associate_attribute_values_to_instance
 from ..checkout.fetch import fetch_checkout_info, fetch_checkout_lines
-from ..checkout.models import Checkout, CheckoutLine
+from ..checkout.models import Checkout, CheckoutLine, CheckoutMetadata
 from ..checkout.utils import add_variant_to_checkout, add_voucher_to_checkout
 from ..core import EventDeliveryStatus, JobStatus
 from ..core.models import EventDelivery, EventDeliveryAttempt, EventPayload
@@ -88,6 +87,7 @@ from ..page.models import Page, PageTranslation, PageType
 from ..payment import ChargeStatus, TransactionKind
 from ..payment.interface import AddressData, GatewayConfig, GatewayResponse, PaymentData
 from ..payment.models import Payment, TransactionItem
+from ..permission.models import Permission
 from ..plugins.manager import get_plugins_manager
 from ..plugins.webhook.tasks import WebhookResponse
 from ..plugins.webhook.tests.subscription_webhooks import subscription_queries
@@ -286,6 +286,7 @@ def checkout(db, channel_USD, settings):
         email="user@email.com",
     )
     checkout.set_country("US", commit=True)
+    CheckoutMetadata.objects.create(checkout=checkout)
     return checkout
 
 
@@ -415,10 +416,13 @@ def checkout_ready_to_complete(checkout_with_item, address, shipping_method, gif
     checkout.shipping_address = address
     checkout.shipping_method = shipping_method
     checkout.billing_address = address
-    checkout.store_value_in_metadata(items={"accepted": "true"})
-    checkout.store_value_in_private_metadata(items={"accepted": "false"})
+    checkout.metadata_storage.store_value_in_metadata(items={"accepted": "true"})
+    checkout.metadata_storage.store_value_in_private_metadata(
+        items={"accepted": "false"}
+    )
     checkout_with_item.gift_cards.add(gift_card)
     checkout.save()
+    checkout.metadata_storage.save()
     return checkout
 
 
@@ -497,9 +501,12 @@ def checkout_with_variant_without_inventory_tracking(
     checkout.shipping_address = address
     checkout.shipping_method = shipping_method
     checkout.billing_address = address
-    checkout.store_value_in_metadata(items={"accepted": "true"})
-    checkout.store_value_in_private_metadata(items={"accepted": "false"})
+    checkout.metadata_storage.store_value_in_metadata(items={"accepted": "true"})
+    checkout.metadata_storage.store_value_in_private_metadata(
+        items={"accepted": "false"}
+    )
     checkout.save()
+    checkout.metadata_storage.save()
     return checkout
 
 
@@ -854,6 +861,7 @@ def user_checkout(customer_user, channel_USD):
         note="Test notes",
         currency="USD",
     )
+    CheckoutMetadata.objects.create(checkout=checkout)
     return checkout
 
 
@@ -4546,7 +4554,6 @@ def draft_order_with_fixed_discount_order(draft_order):
         value=value,
         reason="Discount reason",
         amount=(draft_order.undiscounted_total - draft_order.total).gross,
-        # type: ignore
     )
     draft_order.save()
     return draft_order
@@ -5984,7 +5991,7 @@ def stocks_for_cc(warehouses_for_cc, product_variant_list, product_with_two_vari
 
 @pytest.fixture
 def checkout_for_cc(channel_USD, customer_user):
-    return Checkout.objects.create(
+    checkout = Checkout.objects.create(
         channel=channel_USD,
         billing_address=customer_user.default_billing_address,
         shipping_address=customer_user.default_shipping_address,
@@ -5992,6 +5999,8 @@ def checkout_for_cc(channel_USD, customer_user):
         currency="USD",
         email=customer_user.email,
     )
+    CheckoutMetadata.objects.create(checkout=checkout)
+    return checkout
 
 
 @pytest.fixture
