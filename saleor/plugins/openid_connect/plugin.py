@@ -266,7 +266,7 @@ class OpenIDConnectPlugin(BasePlugin):
 
         user_permissions = []
         if self.config.use_scope_permissions:
-            scope = token_data.get("scope")
+            scope = token_data.get("scp")
             user_permissions = self._use_scope_permissions(user, scope)
             if not user.is_staff and bool(
                 SALEOR_STAFF_PERMISSION in scope or user_permissions
@@ -361,7 +361,7 @@ class OpenIDConnectPlugin(BasePlugin):
             user_permissions = []
             if self.config.use_scope_permissions:
                 user_permissions = self._use_scope_permissions(
-                    user, token_data.get("scope")
+                    user, token_data.get("scp")
                 )
 
             tokens = create_tokens_from_oauth_payload(

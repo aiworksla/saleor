@@ -184,16 +184,8 @@ def get_user_from_oauth_access_token_in_jwt_format(
         logger.info("Unable to create a user object", extra={"error": e})
         return None
 
-    scope = token_payload.get("scope")
-    token_permissions = token_payload.get(
-        "permissions", []
-    ) if not token_payload.get(
-        "cognito:groups",
-        False
-    ) else token_payload.get(
-        "cognito:groups"
-    )
-
+    scope = token_payload.get("scp")
+    token_permissions = token_payload.get("permissions", [])
     # check if token contains expected aud
     aud = token_payload.get("aud")
     if not audience:
@@ -202,11 +194,6 @@ def get_user_from_oauth_access_token_in_jwt_format(
         audience_in_token = audience in aud
     else:
         audience_in_token = audience == aud
-
-    audience_in_token = True if token_payload.get(
-        "cognito:groups",
-        False
-    ) else audience_in_token
 
     is_staff_id = SALEOR_STAFF_PERMISSION
 
