@@ -537,7 +537,7 @@ def get_incorrect_fields(plugin_configuration: "PluginConfiguration"):
 
 
 def get_saleor_permissions_qs_from_scope(scope: Union[str, list]) -> QuerySet[Permission]:
-    if type(scope) != list:
+    if type(scope) == str:
         scope = scope.lower().strip().split()
     return get_saleor_permissions_from_list(scope)
 
