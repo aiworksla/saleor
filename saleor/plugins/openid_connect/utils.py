@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import requests
 from authlib.jose import JWTClaims, jwt
@@ -536,8 +536,9 @@ def get_incorrect_fields(plugin_configuration: "PluginConfiguration"):
         return incorrect_fields
 
 
-def get_saleor_permissions_qs_from_scope(scope: list) -> QuerySet[Permission]:
-    # scope_list = scope.lower().strip().split()
+def get_saleor_permissions_qs_from_scope(scope: Union[str, list]) -> QuerySet[Permission]:
+    if type(scope) != list:
+        scope = scope.lower().strip().split()
     return get_saleor_permissions_from_list(scope)
 
 
