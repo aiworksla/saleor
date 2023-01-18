@@ -16,9 +16,9 @@ from phonenumber_field.modelfields import PhoneNumber, PhoneNumberField
 
 from ..app.models import App
 from ..core.models import ModelWithExternalReference, ModelWithMetadata
-from ..core.permissions import AccountPermissions, BasePermissionEnum, get_permissions
 from ..core.utils.json_serializer import CustomJsonEncoder
 from ..order.models import Order
+from ..permission.enums import AccountPermissions, BasePermissionEnum, get_permissions
 from ..permission.models import Permission, PermissionsMixin, _user_has_perm
 from . import CustomerEvents
 from .validators import validate_possible_number
@@ -53,7 +53,7 @@ class AddressQueryset(models.QuerySet["Address"]):
 AddressManager = models.Manager.from_queryset(AddressQueryset)
 
 
-class Address(models.Model):
+class Address(ModelWithMetadata):
     first_name = models.CharField(max_length=256, blank=True)
     last_name = models.CharField(max_length=256, blank=True)
     company_name = models.CharField(max_length=256, blank=True)
@@ -71,6 +71,7 @@ class Address(models.Model):
     class Meta:
         ordering = ("pk",)
         indexes = [
+            *ModelWithMetadata.Meta.indexes,
             GinIndex(
                 name="address_search_gin",
                 # `opclasses` and `fields` should be the same length

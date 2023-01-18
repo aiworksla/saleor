@@ -11,12 +11,12 @@ from graphene.types import InputObjectType
 
 from ....attribute import AttributeInputType
 from ....attribute import models as attribute_models
-from ....core.permissions import ProductPermissions, ProductTypePermissions
 from ....core.postgres import FlatConcatSearchVector
 from ....core.tracing import traced_atomic_transaction
 from ....order import events as order_events
 from ....order import models as order_models
 from ....order.tasks import recalculate_orders_task
+from ....permission.enums import ProductPermissions, ProductTypePermissions
 from ....product import models
 from ....product.error_codes import ProductErrorCode
 from ....product.search import (
@@ -890,13 +890,18 @@ class ProductVariantStocksUpdate(ProductVariantStocksCreate):
             stock, is_created = warehouse_models.Stock.objects.get_or_create(
                 product_variant=variant, warehouse=warehouse
             )
-
-            if is_created or (stock.quantity <= 0 and stock_data["quantity"] > 0):
+            if is_created or (
+                (stock.quantity - stock.quantity_allocated)
+                <= 0
+                < stock_data["quantity"]
+            ):
                 transaction.on_commit(
                     lambda: manager.product_variant_back_in_stock(stock)
                 )
 
-            if stock_data["quantity"] <= 0:
+            if stock_data["quantity"] <= 0 or (
+                stock_data["quantity"] - stock.quantity_allocated <= 0
+            ):
                 transaction.on_commit(
                     lambda: manager.product_variant_out_of_stock(stock)
                 )

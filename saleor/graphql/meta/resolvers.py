@@ -7,12 +7,12 @@ from ...attribute import models as attribute_models
 from ...checkout import models as checkout_models
 from ...core.exceptions import PermissionDenied
 from ...core.models import ModelWithMetadata
-from ...core.permissions import one_of_permissions_or_auth_filter_required
 from ...discount import models as discount_models
 from ...giftcard import models as giftcard_models
 from ...order import models as order_models
 from ...page import models as page_models
 from ...payment import models as payment_models
+from ...permission.utils import one_of_permissions_or_auth_filter_required
 from ...product import models as product_models
 from ...shipping import models as shipping_models
 from ...shipping.interface import ShippingMethodData
@@ -45,6 +45,7 @@ def resolve_object_with_metadata_type(instance):
 
     if isinstance(instance, ModelWithMetadata):
         MODEL_TO_TYPE_MAP = {
+            account_models.Address: account_types.Address,
             account_models.User: account_types.User,
             app_models.App: app_types.App,
             attribute_models.Attribute: attribute_types.Attribute,
