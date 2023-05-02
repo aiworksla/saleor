@@ -1056,7 +1056,13 @@ def order_unconfirmed(order):
 @pytest.fixture
 def admin_user(db):
     """Return a Django admin user."""
-    return User.objects.create_superuser("admin@example.com", "password")
+    return User.objects.create_user(
+        "admin@example.com",
+        "password",
+        is_staff=True,
+        is_active=True,
+        is_superuser=True,
+    )
 
 
 @pytest.fixture
@@ -3509,6 +3515,7 @@ def order_line(order, variant):
         base_unit_price=unit_price.gross,
         undiscounted_base_unit_price=unit_price.gross,
         tax_rate=Decimal("0.23"),
+        tax_class=variant.product.tax_class,
     )
 
 
@@ -4027,6 +4034,7 @@ def order_with_lines(
         slug="test-product-9",
         product_type=product_type,
         category=category,
+        tax_class=default_tax_class,
     )
     ProductChannelListing.objects.create(
         product=product,
@@ -4093,6 +4101,8 @@ def order_with_lines(
     order.shipping_price = TaxedMoney(net=net, gross=gross)
     order.base_shipping_price = net
     order.shipping_tax_rate = calculate_tax_rate(order.shipping_price)
+    order.total += order.shipping_price
+    order.undiscounted_total += order.shipping_price
     order.save()
 
     recalculate_order(order)
@@ -4605,11 +4615,10 @@ def fulfillment_awaiting_approval(fulfilled_order):
 
 
 @pytest.fixture
-def draft_order(order_with_lines, shipping_method):
+def draft_order(order_with_lines):
     Allocation.objects.filter(order_line__order=order_with_lines).delete()
     order_with_lines.status = OrderStatus.DRAFT
     order_with_lines.origin = OrderOrigin.DRAFT
-    order_with_lines.shipping_method = shipping_method
     order_with_lines.save(update_fields=["status", "origin"])
     return order_with_lines
 
@@ -4863,6 +4872,24 @@ def discount_info(category, collection, sale, channel_USD):
         product_ids=set(),
         category_ids={category.id},  # assumes this category does not have children
         collection_ids={collection.id},
+        variants_ids=set(),
+    )
+
+
+@pytest.fixture
+def discount_info_JPY(sale, product_in_channel_JPY, channel_JPY):
+    sale_channel_listing = sale.channel_listings.create(
+        channel=channel_JPY,
+        discount_value=5,
+        currency=channel_JPY.currency_code,
+    )
+
+    return DiscountInfo(
+        sale=sale,
+        channel_listings={channel_JPY.slug: sale_channel_listing},
+        product_ids={product_in_channel_JPY.id},
+        category_ids=set(),
+        collection_ids=set(),
         variants_ids=set(),
     )
 

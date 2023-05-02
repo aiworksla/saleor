@@ -49,6 +49,8 @@ DEFAULT_TAX_DESCRIPTION = "Unmapped Other SKU - taxable default"
 
 TAX_CODE_NON_TAXABLE_PRODUCT = "NT"
 
+SHIPPING_ITEM_CODE = "Shipping"
+
 
 @dataclass
 class AvataxConfiguration:
@@ -262,7 +264,7 @@ def append_shipping_to_data(
             quantity=1,
             amount=shipping_price_amount,
             tax_code=shipping_tax_code,
-            item_code="Shipping",
+            item_code=SHIPPING_ITEM_CODE,
             prices_entered_with_tax=prices_entered_with_tax,
             discounted=discounted,
         )
@@ -291,10 +293,9 @@ def generate_request_data_from_checkout_lines(
         product = line_info.product
         product_type = line_info.product_type
         tax_code = _get_product_tax_code(product, product_type)
-        is_non_taxable_product = tax_code == TAX_CODE_NON_TAXABLE_PRODUCT
 
         tax_override_data = {}
-        if not charge_taxes or is_non_taxable_product:
+        if not charge_taxes:
             if not is_entire_order_discount:
                 continue
             # if there is a voucher for the entire order we need to attach this line
@@ -350,15 +351,13 @@ def generate_request_data_from_checkout_lines(
             voucher.type == VoucherType.SHIPPING if voucher else False
         )
 
-        tax_class = getattr(delivery_method, "tax_class", None)
-        if tax_class:
-            append_shipping_to_data(
-                data=data,
-                shipping_price_amount=price.amount if price else None,
-                shipping_tax_code=config.shipping_tax_code,
-                prices_entered_with_tax=prices_entered_with_tax,
-                discounted=is_shipping_discount,
-            )
+        append_shipping_to_data(
+            data=data,
+            shipping_price_amount=price.amount if price else None,
+            shipping_tax_code=config.shipping_tax_code,
+            prices_entered_with_tax=prices_entered_with_tax,
+            discounted=is_shipping_discount,
+        )
 
     return data
 
@@ -371,7 +370,7 @@ def get_order_lines_data(
         "variant__product__category",
         "variant__product__collections",
         "variant__product__product_type",
-    ).filter(variant__product__charge_taxes=True)
+    )
 
     tax_configuration = order.channel.tax_configuration
     prices_entered_with_tax = tax_configuration.prices_entered_with_tax
@@ -423,17 +422,13 @@ def get_order_lines_data(
             type=OrderDiscountType.MANUAL
         ).exists()
 
-        # Calculate shipping tax if there is a shipping_tax_class assigned to the order,
-        # or if there is at least tax_class name set (this might be the case when tax
-        # class was assigned but it was removed from DB).
-        if order.shipping_tax_class_id or order.shipping_tax_class_name:
-            append_shipping_to_data(
-                data=data,
-                shipping_price_amount=shipping_price if shipping_price else None,
-                shipping_tax_code=config.shipping_tax_code,
-                prices_entered_with_tax=prices_entered_with_tax,
-                discounted=shipping_discounted,
-            )
+        append_shipping_to_data(
+            data=data,
+            shipping_price_amount=shipping_price if shipping_price else None,
+            shipping_tax_code=config.shipping_tax_code,
+            prices_entered_with_tax=prices_entered_with_tax,
+            discounted=shipping_discounted,
+        )
     return data
 
 
@@ -515,15 +510,27 @@ def generate_request_data_from_checkout(
     )
     if not lines:
         return {}
-    voucher = checkout_info.voucher
-    # for apply_once_per_order vouchers the discount is already applied on lines
-    discount_amount = (
-        checkout_info.checkout.discount.amount
-        if voucher
-        and voucher.type != VoucherType.SPECIFIC_PRODUCT
-        and not voucher.apply_once_per_order
-        else 0
-    )
+
+    discount_amount = Decimal("0")
+    if voucher := checkout_info.voucher:
+        # for apply_once_per_order vouchers the discount is already applied on lines
+        applicable_discount = (
+            voucher.type != VoucherType.SPECIFIC_PRODUCT
+            and not voucher.apply_once_per_order
+        )
+
+        if voucher.type == VoucherType.SHIPPING:
+            # when the taxes are not calculated on shipping method, the shipping
+            # discount cannot by applied by plugin
+            applicable_discount = applicable_discount and SHIPPING_ITEM_CODE in {
+                line["itemCode"] for line in lines
+            }
+
+        discount_amount = (
+            checkout_info.checkout.discount.amount
+            if applicable_discount
+            else Decimal("0")
+        )
 
     currency = checkout_info.checkout.currency
     customer_email = cast(str, checkout_info.get_customer_email())

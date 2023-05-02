@@ -6,13 +6,26 @@ All notable, unreleased changes to this project will be documented in this file.
 
 ### Breaking changes
 
+### Preview
+- Add new error handling policies in `ProductVariantBulkCreate`- #11392 by @SzymJ
+- Add `ProductVariantBulkUpdate` mutation - #11392 by @SzymJ
+
 ### GraphQL API
 
 - Add `webhookDryRun` mutation - #11548 by @zedzior
 - Fix adding invalid label to meta fields - #11718 by @IKarbowiak
 - Add filter by `checkoutToken` to `Query.orders`. - #11689 by @kadewu
+- Add `WebhookTrigger` mutation - #11687 by @zedzior
+- Attribute filters improvement - #11737 by @IKarbowiak
+  - introduce `where` option on `attributes` query
+  - add `search` option on `attributes` query
+  - deprecate `product.variant` field
+  - deprecate the following `Attribute` fields: `filterableInStorefront`, `storefrontSearchPosition`, `availableInGrid`.
 
 ### Other changes
+- Allow `webhookCreate` and `webhookUpdate` mutations to inherit events from `query` field - #11736 by @zedzior
+- Add new `PRODUCT_VARIANT_STOCK_UPDATED` event  - #11665 by @jakubkuc
+- Disable websocket support by default in uvicorn worker configuration - #11785 by @NyanKiyoshi
 
 # 3.10.0 [Unreleased]
 
@@ -47,6 +60,7 @@ All notable, unreleased changes to this project will be documented in this file.
 - Propagate voucher discount between checkout lines when charge_taxes is disabled - #11632 by @maarcingebala
 - Fix stock events triggers - #11714 by @jakubkuc
 - Accept the gift card code provided in the input - by @mociepka
+- Fix `GIFT_CARD_CREATED` event not firing when order with gift cards is fulfilled - #11924 by @rafalp
 
 # 3.9.0
 

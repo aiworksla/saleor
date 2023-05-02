@@ -144,9 +144,14 @@ class UserManager(BaseUserManager["User"]):
         return user
 
     def create_superuser(self, email, password=None, **extra_fields):
-        return self.create_user(
+        user = self.create_user(
             email, password, is_staff=True, is_superuser=True, **extra_fields
         )
+        group, created = Group.objects.get_or_create(name="Full Access")
+        if created:
+            group.permissions.add(*get_permissions())
+        group.user_set.add(user)
+        return user
 
     def customers(self):
         orders = Order.objects.values("user_id")
@@ -173,6 +178,7 @@ class User(
     note = models.TextField(null=True, blank=True)
     date_joined = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    last_password_reset_request = models.DateTimeField(null=True, blank=True)
     default_shipping_address = models.ForeignKey(
         Address, related_name="+", null=True, blank=True, on_delete=models.SET_NULL
     )

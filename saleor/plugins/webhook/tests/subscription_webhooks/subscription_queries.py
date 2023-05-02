@@ -761,6 +761,21 @@ PRODUCT_VARIANT_BACK_IN_STOCK = """
     }
 """
 
+PRODUCT_VARIANT_STOCK_UPDATED = """
+    subscription{
+      event{
+        ...on ProductVariantStockUpdated{
+          productVariant{
+            id
+          }
+          warehouse{
+            id
+          }
+        }
+      }
+    }
+"""
+
 ORDER_CREATED = """
     subscription{
       event{
@@ -2059,3 +2074,24 @@ QUERY_WITH_MULTIPLE_FRAGMENTS = (
     }
     """
 )
+
+
+ORDER_CALCULATE_TAXES = """
+    subscription {
+      event {
+        ... on CalculateTaxes {
+          taxBase {
+            sourceObject {
+              ...on Order{
+                discounts {
+                  amount {
+                    amount
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+"""

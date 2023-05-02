@@ -325,9 +325,11 @@ def test_product_type_query_only_assigned_variant_selections_value_set(
 
 
 QUERY_AVAILABLE_ATTRIBUTES = """
-    query($productTypeId:ID!, $filters: AttributeFilterInput) {
+    query(
+        $productTypeId:ID!, $filters: AttributeFilterInput, $where: AttributeWhereInput
+    ) {
       productType(id: $productTypeId) {
-        availableAttributes(first: 10, filter: $filters) {
+        availableAttributes(first: 10, filter: $filters, where: $where) {
           edges {
             node {
               id
@@ -443,6 +445,31 @@ def test_product_type_filter_unassigned_attributes(
     assert attribute_id == str(expected_attribute.pk)
 
 
+def test_product_type_where_filter_unassigned_attributes(
+    staff_api_client, permission_manage_products, product_type_attribute_list
+):
+    expected_attribute = product_type_attribute_list[0]
+    query = QUERY_AVAILABLE_ATTRIBUTES
+    product_type = ProductType.objects.create(
+        name="Empty Type", kind=ProductTypeKind.NORMAL
+    )
+    product_type_id = graphene.Node.to_global_id("ProductType", product_type.pk)
+    where = {"name": {"eq": expected_attribute.name}}
+
+    found_attributes = get_graphql_content(
+        staff_api_client.post_graphql(
+            query,
+            {"productTypeId": product_type_id, "where": where},
+            permissions=[permission_manage_products],
+        )
+    )["data"]["productType"]["availableAttributes"]["edges"]
+
+    assert len(found_attributes) == 1
+
+    _, attribute_id = graphene.Node.from_global_id(found_attributes[0]["node"]["id"])
+    assert attribute_id == str(expected_attribute.pk)
+
+
 QUERY_PRODUCT_TYPE = """
     query ($id: ID!){
         productType(
@@ -516,3 +543,52 @@ def test_query_product_type_for_federation(api_client, product, channel_USD):
             "name": product_type.name,
         }
     ]
+
+
+PRODUCT_TYPE_TAX_CLASS_QUERY = """
+    query getProductType($id: ID!) {
+        productType(id: $id) {
+            id
+            taxClass {
+                id
+            }
+        }
+    }
+"""
+
+
+def test_product_type_tax_class_query_by_app(
+    app_api_client,
+    product_type,
+):
+    # given
+    variables = {
+        "id": graphene.Node.to_global_id("ProductType", product_type.id),
+    }
+
+    # when
+    response = app_api_client.post_graphql(PRODUCT_TYPE_TAX_CLASS_QUERY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    data = content["data"]
+    assert data["productType"]
+    assert data["productType"]["id"]
+    assert data["productType"]["taxClass"]["id"]
+
+
+def test_product_type_tax_class_query_by_staff(staff_api_client, product_type):
+    # given
+    variables = {
+        "id": graphene.Node.to_global_id("ProductType", product_type.id),
+    }
+
+    # when
+    response = staff_api_client.post_graphql(PRODUCT_TYPE_TAX_CLASS_QUERY, variables)
+
+    # then
+    content = get_graphql_content(response)
+    data = content["data"]
+    assert data["productType"]
+    assert data["productType"]["id"]
+    assert data["productType"]["taxClass"]["id"]

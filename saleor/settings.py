@@ -147,7 +147,7 @@ ENABLE_SSL = get_bool_from_env("ENABLE_SSL", False)
 if ENABLE_SSL:
     SECURE_SSL_REDIRECT = not DEBUG
 
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+DEFAULT_FROM_EMAIL: str = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 
 MEDIA_ROOT = os.path.join(PROJECT_ROOT, "media")
 MEDIA_URL = os.environ.get("MEDIA_URL", "/media/")
@@ -546,6 +546,16 @@ CELERY_TASK_ROUTES = {
     },
 }
 
+# Defines after how many seconds should the task triggered by the Celery beat
+# entry 'update-products-search-vectors' expire if it wasn't picked up by a worker.
+BEAT_UPDATE_SEARCH_EXPIRE_AFTER_SEC = 20
+
+# Defines the Celery beat scheduler entries.
+#
+# Note: if a Celery task triggered by a Celery beat entry has an expiration
+# @task(expires=...), the Celery beat scheduler entry should also define
+# the expiration value. This makes sure if the task or scheduling is wrapped
+# by custom code (e.g., a Saleor fork), the expiration is still present.
 CELERY_BEAT_SCHEDULE = {
     "delete-empty-allocations": {
         "task": "saleor.warehouse.tasks.delete_empty_allocations_task",
@@ -586,6 +596,7 @@ CELERY_BEAT_SCHEDULE = {
     "update-products-search-vectors": {
         "task": "saleor.product.tasks.update_products_search_vector_task",
         "schedule": timedelta(seconds=20),
+        "options": {"expires": BEAT_UPDATE_SEARCH_EXPIRE_AFTER_SEC},
     },
 }
 
@@ -805,3 +816,8 @@ UPDATE_SEARCH_VECTOR_INDEX_QUEUE_NAME = os.environ.get(
 )
 # Queue name for "async webhook" events
 WEBHOOK_CELERY_QUEUE_NAME = os.environ.get("WEBHOOK_CELERY_QUEUE_NAME", None)
+
+# Lock time for request password reset mutation per user (seconds)
+RESET_PASSWORD_LOCK_TIME = parse(
+    os.environ.get("RESET_PASSWORD_LOCK_TIME", "15 minutes")
+)
