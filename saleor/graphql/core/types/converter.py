@@ -12,7 +12,6 @@ from ..filters import (
     GlobalIDMultipleChoiceField,
     ListObjectTypeFilter,
     ObjectTypeFilter,
-    OperationObjectTypeFilter,
 )
 from .common import NonNullList
 
@@ -52,7 +51,6 @@ def convert_form_field_to_float(field):
     )
 
 
-@convert_form_field.register(OperationObjectTypeFilter)
 @convert_form_field.register(ObjectTypeFilter)
 @convert_form_field.register(EnumFilter)
 def convert_convert_enum(field):

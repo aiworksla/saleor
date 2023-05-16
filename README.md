@@ -56,9 +56,7 @@
 
 ## What makes Saleor special?
 
-Saleor is a rapidly-growing open-source e-commerce platform that serves high-volume companies. Designed from the ground up to be extensible, headless, and composable.
-
-Learn more about [architecture](https://docs.saleor.io/docs/3.x/overview/architecture).
+Saleor is a rapidly-growing open source e-commerce platform that has served high-volume companies from branches like publishing and apparel since 2012. Based on Python and Django, the latest major update introduces a modular front end powered by a GraphQL API and written with React and TypeScript.
 
 ## Features
 

@@ -14,7 +14,8 @@ from typing import (
 )
 from uuid import UUID
 
-from ..core.utils.lazyobjects import lazy_no_retry
+from django.utils.functional import SimpleLazyObject
+
 from ..discount import DiscountInfo, VoucherType
 from ..discount.interface import fetch_voucher_info
 from ..discount.utils import fetch_active_discounts
@@ -360,41 +361,31 @@ def apply_voucher_to_checkout_line(
 
     voucher = voucher_info.voucher
     discounted_lines_by_voucher: List[CheckoutLineInfo] = []
-    lines_included_in_discount = lines_info
-    if voucher.type == VoucherType.SPECIFIC_PRODUCT:
+    if voucher.apply_once_per_order:
+        channel = checkout.channel
+        cheapest_line_price = None
+        cheapest_line = None
+        for line_info in lines_info:
+            line_price = line_info.variant.get_price(
+                product=line_info.product,
+                collections=line_info.collections,
+                channel=channel,
+                channel_listing=line_info.channel_listing,
+                discounts=discounts,
+                price_override=line_info.line.price_override,
+            )
+            if not cheapest_line or cheapest_line_price > line_price:
+                cheapest_line_price = line_price
+                cheapest_line = line_info
+        if cheapest_line:
+            discounted_lines_by_voucher.append(cheapest_line)
+    else:
         discounted_lines_by_voucher.extend(
             get_discounted_lines(lines_info, voucher_info)
         )
-        lines_included_in_discount = discounted_lines_by_voucher
-    if voucher.apply_once_per_order:
-        cheapest_line = _get_the_cheapest_line(
-            checkout, lines_included_in_discount, discounts
-        )
-        if cheapest_line:
-            discounted_lines_by_voucher = [cheapest_line]
     for line_info in lines_info:
         if line_info in discounted_lines_by_voucher:
             line_info.voucher = voucher
-
-
-def _get_the_cheapest_line(
-    checkout: "Checkout",
-    lines_info: Iterable[CheckoutLineInfo],
-    discounts: Iterable["DiscountInfo"],
-):
-    channel = checkout.channel
-
-    def variant_price(line_info):
-        return line_info.variant.get_price(
-            product=line_info.product,
-            collections=line_info.collections,
-            channel=channel,
-            channel_listing=line_info.channel_listing,
-            discounts=discounts,
-            price_override=line_info.line.price_override,
-        )
-
-    return min(lines_info, default=None, key=variant_price)
 
 
 def fetch_checkout_info(
@@ -492,7 +483,7 @@ def update_checkout_info_delivery_method_info(
     else:
         delivery_method = collection_point
 
-    checkout_info.delivery_method_info = lazy_no_retry(
+    checkout_info.delivery_method_info = SimpleLazyObject(
         lambda: get_delivery_method_info(
             delivery_method,
             checkout_info.shipping_address,
@@ -547,13 +538,7 @@ def get_valid_internal_shipping_method_list_for_checkout_info(
     is_shipping_voucher = (
         checkout_info.voucher and checkout_info.voucher.type == VoucherType.SHIPPING
     )
-
-    is_voucher_for_specific_product = (
-        checkout_info.voucher
-        and checkout_info.voucher.type == VoucherType.SPECIFIC_PRODUCT
-    )
-
-    if not is_shipping_voucher and not is_voucher_for_specific_product:
+    if not is_shipping_voucher:
         subtotal -= checkout_info.checkout.discount
 
     valid_shipping_methods = get_valid_internal_shipping_methods_for_checkout(
@@ -640,10 +625,10 @@ def update_delivery_method_lists_for_checkout_info(
         initialize_shipping_method_active_status(all_methods, excluded_methods)
         return all_methods
 
-    checkout_info.all_shipping_methods = lazy_no_retry(
+    checkout_info.all_shipping_methods = SimpleLazyObject(
         _resolve_all_shipping_methods
     )  # type: ignore[assignment] # using lazy object breaks protocol
-    checkout_info.valid_pick_up_points = lazy_no_retry(
+    checkout_info.valid_pick_up_points = SimpleLazyObject(
         lambda: (get_valid_collection_points_for_checkout_info(lines, checkout_info))
     )  # type: ignore[assignment] # using lazy object breaks protocol
     update_checkout_info_delivery_method_info(
@@ -663,7 +648,7 @@ def get_valid_collection_points_for_checkout_info(
     valid_collection_points = get_valid_collection_points_for_checkout(
         lines, checkout_info.channel.id, quantity_check=False
     )
-    return list(valid_collection_points)
+    return SimpleLazyObject(lambda: list(valid_collection_points))
 
 
 def update_checkout_info_delivery_method(

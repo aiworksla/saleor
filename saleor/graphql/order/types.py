@@ -127,7 +127,6 @@ from .dataloaders import (
     FulfillmentLinesByIdLoader,
     FulfillmentsByOrderIdLoader,
     OrderByIdLoader,
-    OrderByNumberLoader,
     OrderEventsByOrderIdLoader,
     OrderLineByIdLoader,
     OrderLinesByOrderIdLoader,
@@ -430,19 +429,10 @@ class OrderEvent(ModelObjectType[models.OrderEvent]):
 
     @staticmethod
     def resolve_related_order(root: models.OrderEvent, info):
-        order_pk_or_number = root.parameters.get("related_order_pk")
-        if not order_pk_or_number:
+        order_pk = root.parameters.get("related_order_pk")
+        if not order_pk:
             return None
-
-        try:
-            # Orders that primary_key are not uuid are old int `id's`.
-            # In migration `order_0128`, before migrating old `id's` to uuid,
-            # old `id's` were saved to field `number`.
-            order_pk = UUID(order_pk_or_number)
-        except (AttributeError, ValueError):
-            return OrderByNumberLoader(info.context).load(order_pk_or_number)
-
-        return OrderByIdLoader(info.context).load(order_pk)
+        return OrderByIdLoader(info.context).load(UUID(order_pk))
 
     @staticmethod
     def resolve_discount(root: models.OrderEvent, info):
@@ -615,10 +605,7 @@ class OrderLine(ModelObjectType[models.OrderLine]):
         + ADDED_IN_39
         + PREVIEW_FEATURE,
         required=False,
-        permissions=[
-            AuthorizationFilters.AUTHENTICATED_STAFF_USER,
-            AuthorizationFilters.AUTHENTICATED_APP,
-        ],
+        permissions=[AuthorizationFilters.AUTHENTICATED_STAFF_USER],
     )
     tax_class_name = graphene.Field(
         graphene.String,
@@ -994,6 +981,9 @@ class Order(ModelObjectType[models.Order]):
     undiscounted_total = graphene.Field(
         TaxedMoney, description="Undiscounted total amount of the order.", required=True
     )
+    shipping_price = graphene.Field(
+        TaxedMoney, description="Total price of shipping.", required=True
+    )
     shipping_method = graphene.Field(
         ShippingMethod,
         description="Shipping method for this order.",
@@ -1011,10 +1001,7 @@ class Order(ModelObjectType[models.Order]):
         + ADDED_IN_39
         + PREVIEW_FEATURE,
         required=False,
-        permissions=[
-            AuthorizationFilters.AUTHENTICATED_STAFF_USER,
-            AuthorizationFilters.AUTHENTICATED_APP,
-        ],
+        permissions=[AuthorizationFilters.AUTHENTICATED_STAFF_USER],
     )
     shipping_tax_class_name = graphene.Field(
         graphene.String,
