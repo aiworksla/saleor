@@ -8,7 +8,7 @@ from graphql import GraphQLError
 
 from ...permission.utils import message_one_of_permissions_required
 from ..decorators import one_of_permissions_required
-from .connection import FILTERS_NAME, FILTERSET_CLASS, WHERE_FILTERSET_CLASS, WHERE_NAME
+from .connection import FILTERS_NAME, FILTERSET_CLASS
 
 
 class PermissionsField(graphene.Field):
@@ -92,13 +92,6 @@ class FilterConnectionField(ConnectionField):
         self.filterset_class = None
         if self.filter_input:
             self.filterset_class = self.filter_input.filterset_class
-
-        self.where_field_name = kwargs.get("where_field_name", "where")
-        self.where_input = kwargs.get(self.where_field_name)
-        self.where_filterset_class = None
-        if self.where_input:
-            self.where_filterset_class = self.where_input.filterset_class
-
         super().__init__(type_, *args, **kwargs)
 
     def get_resolver(self, parent_resolver):
@@ -108,8 +101,6 @@ class FilterConnectionField(ConnectionField):
         def new_resolver(obj, info, **kwargs):
             kwargs[FILTERSET_CLASS] = self.filterset_class
             kwargs[FILTERS_NAME] = self.filter_field_name
-            kwargs[WHERE_FILTERSET_CLASS] = self.where_filterset_class
-            kwargs[WHERE_NAME] = self.where_field_name
             return wrapped_resolver(obj, info, **kwargs)
 
         return new_resolver

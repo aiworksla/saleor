@@ -253,12 +253,10 @@ def test_order_fulfill_with_stock_exceeded_with_flag_disabled(
 
     errors = data["errors"]
     assert errors[0]["code"] == "INSUFFICIENT_STOCK"
-    assert errors[0]["message"] == "Insufficient product stock."
-    assert errors[1]["orderLines"] == [order_line2_id]
+    assert errors[0]["message"] == f"Insufficient product stock: {order_line}"
 
     assert errors[1]["code"] == "INSUFFICIENT_STOCK"
-    assert errors[1]["message"] == "Insufficient product stock."
-    assert errors[1]["orderLines"] == [order_line2_id]
+    assert errors[1]["message"] == f"Insufficient product stock: {order_line2}"
 
 
 def test_order_fulfill_with_stock_exceeded_with_flag_enabled(
@@ -1796,7 +1794,6 @@ APPROVE_FULFILLMENT_MUTATION = """
                 field
                 code
                 message
-                orderLines
             }
         }
     }
@@ -1912,8 +1909,7 @@ def test_fulfillment_approve_delete_products_before_approval_allow_stock_exceede
     expected_errors = [
         {
             **error_field_and_code,
-            "orderLines": [graphene.Node.to_global_id("OrderLine", line.order_line_id)],
-            "message": "Insufficient product stock.",
+            "message": f"Insufficient product stock: {line.order_line}",
         }
         for line in fulfillment.lines.all()
     ]
@@ -2080,8 +2076,7 @@ def test_fulfillment_approve_when_stock_is_exceeded_and_flag_disabled(
     expected_errors = [
         {
             **error_field_and_code,
-            "message": "Insufficient product stock.",
-            "orderLines": [graphene.Node.to_global_id("OrderLine", line.order_line_id)],
+            "message": f"Insufficient product stock: {line.order_line}",
         }
         for line in fulfillment.lines.all()
     ]
@@ -2090,11 +2085,9 @@ def test_fulfillment_approve_when_stock_is_exceeded_and_flag_disabled(
         assert expected_error in errors
 
 
-@patch("saleor.plugins.manager.PluginsManager.fulfillment_approved")
 @patch("saleor.order.actions.send_fulfillment_confirmation_to_customer", autospec=True)
 def test_fulfillment_approve_partial_order_fulfill(
     mock_email_fulfillment,
-    mock_fulfillment_approved,
     staff_api_client,
     fulfillment_awaiting_approval,
     permission_manage_orders,
@@ -2140,7 +2133,6 @@ def test_fulfillment_approve_partial_order_fulfill(
     assert fulfillment_awaiting_approval.status == FulfillmentStatus.FULFILLED
 
     assert mock_email_fulfillment.call_count == 0
-    mock_fulfillment_approved.assert_called_once_with(fulfillment_awaiting_approval)
 
 
 def test_fulfillment_approve_invalid_status(

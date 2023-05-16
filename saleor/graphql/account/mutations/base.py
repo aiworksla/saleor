@@ -1,11 +1,9 @@
 from typing import cast
 
 import graphene
-from django.conf import settings
 from django.contrib.auth import password_validation
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.utils import timezone
 
 from ....account import events as account_events
 from ....account import models
@@ -30,7 +28,7 @@ from ...account.types import Address, AddressInput, User
 from ...app.dataloaders import get_app_promise
 from ...channel.utils import clean_channel, validate_channel
 from ...core import ResolveInfo
-from ...core.context import disallow_replica_in_context
+from ...core.context import set_mutation_flag_in_context
 from ...core.descriptions import ADDED_IN_310
 from ...core.enums import LanguageCodeEnum
 from ...core.mutations import (
@@ -89,7 +87,7 @@ class SetPassword(CreateToken):
     def mutate(  # type: ignore[override]
         cls, root, info: ResolveInfo, /, *, email, password, token
     ):
-        disallow_replica_in_context(info.context)
+        set_mutation_flag_in_context(info.context)
         manager = get_plugin_manager_promise(info.context).get()
         result = manager.perform_mutation(
             mutation_cls=cls,
@@ -163,6 +161,7 @@ class RequestPasswordReset(BaseMutation):
 
     @classmethod
     def clean_user(cls, email, redirect_url):
+
         try:
             validate_storefront_url(redirect_url)
         except ValidationError as error:
@@ -180,7 +179,6 @@ class RequestPasswordReset(BaseMutation):
                     )
                 }
             )
-
         if not user.is_active:
             raise ValidationError(
                 {
@@ -190,19 +188,6 @@ class RequestPasswordReset(BaseMutation):
                     )
                 }
             )
-
-        if password_reset_time := user.last_password_reset_request:
-            delta = timezone.now() - password_reset_time
-            if delta.total_seconds() < settings.RESET_PASSWORD_LOCK_TIME:
-                raise ValidationError(
-                    {
-                        "email": ValidationError(
-                            "Password reset already requested",
-                            code=AccountErrorCode.PASSWORD_RESET_ALREADY_REQUESTED.value,
-                        )
-                    }
-                )
-
         return user
 
     @classmethod
@@ -228,8 +213,6 @@ class RequestPasswordReset(BaseMutation):
             channel_slug=channel_slug,
             staff=user.is_staff,
         )
-        user.last_password_reset_request = timezone.now()
-        user.save(update_fields=["last_password_reset_request"])
         return RequestPasswordReset()
 
 

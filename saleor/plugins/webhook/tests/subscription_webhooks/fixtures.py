@@ -373,14 +373,6 @@ def subscription_product_variant_back_in_stock_webhook(subscription_webhook):
 
 
 @pytest.fixture
-def subscription_product_variant_stock_updated_webhook(subscription_webhook):
-    return subscription_webhook(
-        queries.PRODUCT_VARIANT_STOCK_UPDATED,
-        WebhookEventAsyncType.PRODUCT_VARIANT_STOCK_UPDATED,
-    )
-
-
-@pytest.fixture
 def subscription_order_created_webhook(subscription_webhook):
     return subscription_webhook(
         queries.ORDER_CREATED, WebhookEventAsyncType.ORDER_CREATED
@@ -923,14 +915,4 @@ def subscription_order_filter_shipping_methods_webhook_with_available_ship_metho
     return subscription_webhook(
         queries.ORDER_FILTER_SHIPPING_METHODS_AVAILABLE_SHIPPING_METHODS,
         WebhookEventSyncType.ORDER_FILTER_SHIPPING_METHODS,
-    )
-
-
-@pytest.fixture
-def subscription_calculate_taxes_for_order(
-    subscription_webhook,
-):
-    return subscription_webhook(
-        queries.ORDER_CALCULATE_TAXES,
-        WebhookEventSyncType.ORDER_CALCULATE_TAXES,
     )

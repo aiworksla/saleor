@@ -27,9 +27,6 @@ from .consts import (
 logger = logging.getLogger(__name__)
 
 
-stripe.api_version = STRIPE_API_VERSION
-
-
 @contextmanager
 def stripe_opentracing_trace(span_name):
     with opentracing_trace(
@@ -42,7 +39,7 @@ def is_secret_api_key_valid(api_key: str):
     """Call api to check if api_key is a correct key."""
     try:
         with stripe_opentracing_trace("stripe.WebhookEndpoint.list"):
-            stripe.WebhookEndpoint.list(api_key)
+            stripe.WebhookEndpoint.list(api_key, stripe_version=STRIPE_API_VERSION)
         return True
     except AuthenticationError:
         return False
@@ -76,6 +73,7 @@ def subscribe_webhook(api_key: str, channel_slug: str) -> Optional[StripeObject]
                 url=webhook_url,
                 enabled_events=WEBHOOK_EVENTS,
                 metadata={METADATA_IDENTIFIER: domain},
+                stripe_version=STRIPE_API_VERSION,
             )
         except StripeError as error:
             logger.warning(
@@ -91,6 +89,7 @@ def delete_webhook(api_key: str, webhook_id: str):
             stripe.WebhookEndpoint.delete(
                 webhook_id,
                 api_key=api_key,
+                stripe_version=STRIPE_API_VERSION,
             )
     except InvalidRequestError:
         # webhook doesn't exist
@@ -108,11 +107,11 @@ def get_or_create_customer(
                 return stripe.Customer.retrieve(
                     customer_id,
                     api_key=api_key,
+                    stripe_version=STRIPE_API_VERSION,
                 )
         with stripe_opentracing_trace("stripe.Customer.create"):
             return stripe.Customer.create(
-                api_key=api_key,
-                email=customer_email,
+                api_key=api_key, email=customer_email, stripe_version=STRIPE_API_VERSION
             )
     except StripeError as error:
         logger.warning(
@@ -168,6 +167,7 @@ def create_payment_intent(
                 amount=price_to_minor_unit(amount, currency),
                 currency=currency,
                 capture_method=capture_method,
+                stripe_version=STRIPE_API_VERSION,
                 **additional_params,
             )
         return intent, None
@@ -205,6 +205,7 @@ def list_customer_payment_methods(
             payment_methods = stripe.PaymentMethod.list(
                 api_key=api_key,
                 customer=customer_id,
+                stripe_version=STRIPE_API_VERSION,
                 type="card",  # we support only cards for now
             )
         return payment_methods, None
@@ -220,6 +221,7 @@ def retrieve_payment_intent(
             payment_intent = stripe.PaymentIntent.retrieve(
                 payment_intent_id,
                 api_key=api_key,
+                stripe_version=STRIPE_API_VERSION,
             )
         return payment_intent, None
     except StripeError as error:
@@ -239,6 +241,7 @@ def capture_payment_intent(
                 payment_intent_id,
                 amount_to_capture=amount_to_capture,
                 api_key=api_key,
+                stripe_version=STRIPE_API_VERSION,
             )
         return payment_intent, None
     except StripeError as error:
@@ -258,6 +261,7 @@ def refund_payment_intent(
                 payment_intent=payment_intent_id,
                 amount=amount_to_refund,
                 api_key=api_key,
+                stripe_version=STRIPE_API_VERSION,
             )
         return refund, None
     except StripeError as error:
@@ -276,6 +280,7 @@ def cancel_payment_intent(
             payment_intent = stripe.PaymentIntent.cancel(
                 payment_intent_id,
                 api_key=api_key,
+                stripe_version=STRIPE_API_VERSION,
             )
         return payment_intent, None
     except StripeError as error:

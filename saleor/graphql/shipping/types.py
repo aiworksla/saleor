@@ -5,8 +5,7 @@ from django.db.models import QuerySet
 from graphene import relay
 
 from ...core.weight import convert_weight_to_default_weight_unit
-from ...permission.auth_filters import AuthorizationFilters
-from ...permission.enums import ShippingPermissions
+from ...permission.enums import CheckoutPermissions, ShippingPermissions
 from ...product import models as product_models
 from ...shipping import models
 from ...shipping.interface import ShippingMethodData
@@ -153,8 +152,8 @@ class ShippingMethodType(ChannelContextTypeWithMetadataForObjectType):
         description="Tax class assigned to this shipping method.",
         required=False,
         permissions=[
-            AuthorizationFilters.AUTHENTICATED_STAFF_USER,
-            AuthorizationFilters.AUTHENTICATED_APP,
+            CheckoutPermissions.MANAGE_TAXES,
+            ShippingPermissions.MANAGE_SHIPPING,
         ],
     )
 

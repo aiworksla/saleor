@@ -254,7 +254,6 @@ def trigger_all_webhooks_sync(
     parse_response: Callable[[Any], Optional[R]],
     subscribable_object=None,
     requestor=None,
-    allow_replica=True,
 ) -> Optional[R]:
     """Send all synchronous webhook request for given event type.
 
@@ -271,9 +270,8 @@ def trigger_all_webhooks_sync(
         if webhook.subscription_query:
             if request_context is None:
                 request_context = initialize_request(
-                    requestor, event_type in WebhookEventSyncType.ALL, allow_replica
+                    requestor, event_type in WebhookEventSyncType.ALL
                 )
-
             delivery = create_delivery_for_subscription_sync_event(
                 event_type=event_type,
                 subscribable_object=subscribable_object,
@@ -501,7 +499,6 @@ def send_webhook_request_async(self, event_delivery_id):
                 delivery.event_type,
                 data,
             )
-
         attempt_update(attempt, response)
         if response.status == EventDeliveryStatus.FAILED:
             task_logger.info(

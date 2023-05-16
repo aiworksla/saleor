@@ -898,18 +898,6 @@ class WebhookPlugin(BasePlugin):
                 product_variant_data, event_type, webhooks, stock, self.requestor
             )
 
-    def product_variant_stock_updated(self, stock: "Stock", previous_value: Any) -> Any:
-        if not self.active:
-            return previous_value
-        event_type = WebhookEventAsyncType.PRODUCT_VARIANT_STOCK_UPDATED
-        if webhooks := get_webhooks_for_event(event_type):
-            product_variant_data = generate_product_variant_with_stock_payload(
-                [stock], self.requestor
-            )
-            trigger_webhooks_async(
-                product_variant_data, event_type, webhooks, stock, self.requestor
-            )
-
     def checkout_created(self, checkout: "Checkout", previous_value: Any) -> Any:
         if not self.active:
             return previous_value
@@ -1303,7 +1291,7 @@ class WebhookPlugin(BasePlugin):
         transaction_kind: str,
         payment_information: "PaymentData",
         previous_value,
-        **kwargs,
+        **kwargs
     ) -> "GatewayResponse":
         """Trigger payment webhook event.
 
@@ -1479,7 +1467,6 @@ class WebhookPlugin(BasePlugin):
             parse_tax_data,
             checkout_info.checkout,
             self.requestor,
-            self.allow_replica,
         )
 
     def get_taxes_for_order(
@@ -1491,7 +1478,6 @@ class WebhookPlugin(BasePlugin):
             parse_tax_data,
             order,
             self.requestor,
-            self.allow_replica,
         )
 
     def get_shipping_methods_for_checkout(

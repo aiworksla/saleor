@@ -482,9 +482,9 @@ def approve_fulfillment(
         update_order_status(order)
 
         call_event(manager.order_updated, order)
-        call_event(manager.fulfillment_approved, fulfillment)
         if order.status == OrderStatus.FULFILLED:
             call_event(manager.order_fulfilled, order)
+            transaction.on_commit(lambda f=fulfillment: manager.fulfillment_approved(f))
 
         if gift_card_lines_info:
             gift_cards_create(
@@ -1148,7 +1148,6 @@ def create_replace_order(
             order_line.order = replace_order
             order_line.quantity = line_data.quantity
             order_line.quantity_fulfilled = 0
-            order_line.old_id = None
             # we set order_line_id as a key to use it for iterating over fulfillment
             # items
             order_line_to_create[order_line_id] = order_line
@@ -1173,7 +1172,6 @@ def create_replace_order(
             order_line = order_line_from_fulfillment
             order_line_id = order_line.pk
             order_line.pk = None
-            order_line.old_id = None
             order_line.order = replace_order
             order_line.quantity = fulfillment_line_data.quantity
             order_line.quantity_fulfilled = 0

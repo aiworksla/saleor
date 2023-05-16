@@ -198,7 +198,6 @@ class Attribute(ModelObjectType[models.Attribute]):
             f"{ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES.name}."
         ),
         required=True,
-        deprecation_reason=DEPRECATED_IN_3X_FIELD,
     )
     filterable_in_dashboard = graphene.Boolean(
         description=(
@@ -219,7 +218,6 @@ class Attribute(ModelObjectType[models.Attribute]):
             f"{ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES.name}."
         ),
         required=True,
-        deprecation_reason=DEPRECATED_IN_3X_FIELD,
     )
     storefront_search_position = graphene.Int(
         description=(
@@ -230,7 +228,6 @@ class Attribute(ModelObjectType[models.Attribute]):
             f"{ProductTypePermissions.MANAGE_PRODUCT_TYPES_AND_ATTRIBUTES.name}."
         ),
         required=True,
-        deprecation_reason=DEPRECATED_IN_3X_FIELD,
     )
     translation = TranslationField(AttributeTranslation, type_name="attribute")
     with_choices = graphene.Boolean(
