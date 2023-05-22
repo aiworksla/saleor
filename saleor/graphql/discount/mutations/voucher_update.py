@@ -1,7 +1,8 @@
 import graphene
 
-from ....core.permissions import DiscountPermissions
 from ....discount import models
+from ....permission.enums import DiscountPermissions
+from ...core import ResolveInfo
 from ...core.types import DiscountError
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ..types import Voucher
@@ -24,6 +25,6 @@ class VoucherUpdate(VoucherCreate):
         error_type_field = "discount_errors"
 
     @classmethod
-    def post_save_action(cls, info, instance, cleaned_input):
+    def post_save_action(cls, info: ResolveInfo, instance, cleaned_input):
         manager = get_plugin_manager_promise(info.context).get()
         cls.call_event(manager.voucher_updated, instance)

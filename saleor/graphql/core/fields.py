@@ -1,16 +1,19 @@
 from functools import wraps
 from json import JSONDecodeError
+from typing import Optional
 
 import graphene
 from graphene.relay import Connection, is_node
 from graphql import GraphQLError
 
-from ...core.permissions import message_one_of_permissions_required
+from ...permission.utils import message_one_of_permissions_required
 from ..decorators import one_of_permissions_required
 from .connection import FILTERS_NAME, FILTERSET_CLASS
 
 
 class PermissionsField(graphene.Field):
+    description: Optional[str]
+
     def __init__(self, *args, **kwargs):
         self.permissions = kwargs.pop("permissions", [])
         auto_permission_message = kwargs.pop("auto_permission_message", True)

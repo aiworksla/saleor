@@ -1,8 +1,8 @@
+import datetime
 import re
 from collections import defaultdict, namedtuple
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, Type, Union
 
 import graphene
 from django.core.exceptions import ValidationError
@@ -43,6 +43,7 @@ class AttrValuesInput:
     global_id: str
     values: Optional[List[str]] = None
     dropdown: Optional[AttrValuesForSelectableFieldInput] = None
+    swatch: Optional[AttrValuesForSelectableFieldInput] = None
     multiselect: Optional[List[AttrValuesForSelectableFieldInput]] = None
     numeric: Optional[str] = None
     references: Union[List[str], List[page_models.Page], None] = None
@@ -51,8 +52,8 @@ class AttrValuesInput:
     rich_text: Optional[dict] = None
     plain_text: Optional[str] = None
     boolean: Optional[bool] = None
-    date: Optional[str] = None
-    date_time: Optional[str] = None
+    date: Optional[datetime.date] = None
+    date_time: Optional[datetime.datetime] = None
 
 
 T_INSTANCE = Union[
@@ -180,7 +181,9 @@ class AttributeAssignmentMixin:
         :raises ValidationError: contain the message.
         :return: The resolved data
         """
-        error_class = PageErrorCode if is_page_attributes else ProductErrorCode
+        error_class: Union[Type[PageErrorCode], Type[ProductErrorCode]] = (
+            PageErrorCode if is_page_attributes else ProductErrorCode
+        )
 
         # Mapping to associate the input values back to the resolved attribute nodes
         pks = {}
@@ -192,7 +195,7 @@ class AttributeAssignmentMixin:
             if global_id is None:
                 raise ValidationError(
                     "The attribute ID is required.",
-                    code=error_class.REQUIRED.value,  # type: ignore
+                    code=error_class.REQUIRED.value,
                 )
             values = AttrValuesInput(
                 global_id=global_id,
@@ -230,7 +233,7 @@ class AttributeAssignmentMixin:
                 "Provided references are invalid. Some of the nodes "
                 "do not exist or are different types than types defined "
                 "in attribute entity type.",
-                code=error_class.INVALID.value,  # type: ignore
+                code=error_class.INVALID.value,
             )
 
         cls._validate_attributes_input(
@@ -246,7 +249,7 @@ class AttributeAssignmentMixin:
     def _clean_file_url(file_url: Optional[str], error_class):
         # extract storage path from file URL
         storage_root_url = get_default_storage_root_url()
-        if file_url and not file_url.startswith(storage_root_url):  # type: ignore
+        if file_url and not file_url.startswith(storage_root_url):
             raise ValidationError(
                 "The file_url must be the path to the default storage.",
                 code=error_class.INVALID.value,
@@ -263,9 +266,12 @@ class AttributeAssignmentMixin:
         if not references:
             return values
 
-        entity_model = cls.ENTITY_TYPE_MAPPING[
-            attribute.entity_type  # type: ignore
-        ].model
+        if not attribute.entity_type:
+            # FIXME: entity type is nullable for whatever reason
+            raise ValidationError(
+                "Invalid reference type.", code=error_class.INVALID.value
+            )
+        entity_model = cls.ENTITY_TYPE_MAPPING[attribute.entity_type].model
         try:
             ref_instances = get_nodes(
                 references, attribute.entity_type, model=entity_model
@@ -273,7 +279,9 @@ class AttributeAssignmentMixin:
             values.references = ref_instances
             return values
         except GraphQLError:
-            raise ValidationError("Invalid reference type.", code=error_class.INVALID)
+            raise ValidationError(
+                "Invalid reference type.", code=error_class.INVALID.value
+            )
 
     @classmethod
     def _validate_attributes_input(
@@ -315,6 +323,7 @@ class AttributeAssignmentMixin:
             AttributeInputType.DATE: cls._pre_save_date_time_values,
             AttributeInputType.DATE_TIME: cls._pre_save_date_time_values,
             AttributeInputType.DROPDOWN: cls._pre_save_dropdown_value,
+            AttributeInputType.SWATCH: cls._pre_save_swatch_value,
             AttributeInputType.FILE: cls._pre_save_file_value,
             AttributeInputType.NUMERIC: cls._pre_save_numeric_values,
             AttributeInputType.MULTISELECT: cls._pre_save_multiselect_values,
@@ -369,6 +378,29 @@ class AttributeAssignmentMixin:
             return (model,)
 
         if attr_value := attr_values.dropdown.value:
+            model = prepare_attribute_values(attribute, [attr_value])
+            return model
+
+        return tuple()
+
+    @classmethod
+    def _pre_save_swatch_value(
+        cls,
+        _,
+        attribute: attribute_models.Attribute,
+        attr_values: AttrValuesInput,
+    ):
+        if not attr_values.swatch:
+            return tuple()
+
+        if id := attr_values.swatch.id:
+            _, attr_value_id = from_global_id_or_error(id)
+            model = attribute_models.AttributeValue.objects.get(pk=attr_value_id)
+            if not model:
+                raise ValidationError("Attribute value with given ID can't be found")
+            return (model,)
+
+        if attr_value := attr_values.swatch.value:
             model = prepare_attribute_values(attribute, [attr_value])
             return model
 
@@ -503,23 +535,26 @@ class AttributeAssignmentMixin:
         attr_values: AttrValuesInput,
     ):
         is_date_attr = attribute.input_type == AttributeInputType.DATE
-        value = attr_values.date if is_date_attr else attr_values.date_time
-
-        if value is None:
-            return tuple()
-
-        tz = timezone.get_current_timezone()
-        date_time = (
-            datetime(
-                value.year, value.month, value.day, 0, 0, tzinfo=tz  # type: ignore
+        tz = timezone.utc
+        if is_date_attr:
+            if not attr_values.date:
+                return ()
+            value = str(attr_values.date)
+            date_time = datetime.datetime(
+                attr_values.date.year,
+                attr_values.date.month,
+                attr_values.date.day,
+                0,
+                0,
+                tzinfo=tz,
             )
-            if is_date_attr
-            else value
-        )
+        else:
+            if not attr_values.date_time:
+                return ()
+            value = str(attr_values.date_time)
+            date_time = attr_values.date_time
         defaults = {"name": value, "date_time": date_time}
-        return (
-            cls._update_or_create_value(instance, attribute, defaults) if value else ()
-        )
+        return cls._update_or_create_value(instance, attribute, defaults)
 
     @classmethod
     def _update_or_create_value(
@@ -551,7 +586,7 @@ class AttributeAssignmentMixin:
         if not attr_values.references or not attribute.entity_type:
             return tuple()
 
-        entity_data = cls.ENTITY_TYPE_MAPPING[attribute.entity_type]  # type: ignore
+        entity_data = cls.ENTITY_TYPE_MAPPING[attribute.entity_type]
         field_name = entity_data.name_field
         get_or_create = attribute.values.get_or_create
 
@@ -598,7 +633,7 @@ class AttributeAssignmentMixin:
                 name=name,
                 content_type=attr_value.content_type,
             )
-            value.slug = generate_unique_slug(value, name)  # type: ignore
+            value.slug = generate_unique_slug(value, name)
             value.save()
         return (value,)
 
@@ -729,6 +764,7 @@ def validate_attributes_input(
         AttributeInputType.DATE: validate_date_time_input,
         AttributeInputType.DATE_TIME: validate_date_time_input,
         AttributeInputType.DROPDOWN: validate_dropdown_input,
+        AttributeInputType.SWATCH: validate_swatch_input,
         AttributeInputType.FILE: validate_file_attributes_input,
         AttributeInputType.NUMERIC: validate_numeric_input,
         AttributeInputType.MULTISELECT: validate_multiselect_input,
@@ -921,6 +957,26 @@ def validate_dropdown_input(
         )
 
 
+def validate_swatch_input(
+    attribute: "Attribute",
+    attr_values: "AttrValuesInput",
+    attribute_errors: T_ERROR_DICT,
+):
+    attribute_id = attr_values.global_id
+    if not attr_values.swatch:
+        if attribute.value_required:
+            attribute_errors[AttributeInputErrors.ERROR_NO_VALUE_GIVEN].append(
+                attribute_id
+            )
+    else:
+        validate_single_selectable_field(
+            attribute,
+            attr_values.swatch,
+            attribute_errors,
+            attribute_id,
+        )
+
+
 def validate_multiselect_input(
     attribute: "Attribute",
     attr_values: "AttrValuesInput",
@@ -979,7 +1035,7 @@ def validate_numeric_input(
         return
 
     try:
-        float(attr_values.numeric)  # type: ignore
+        float(attr_values.numeric)
     except ValueError:
         attribute_errors[AttributeInputErrors.ERROR_NUMERIC_VALUE_REQUIRED].append(
             attribute_id
@@ -1060,7 +1116,7 @@ def validate_required_attributes(
         ]
         error = ValidationError(
             "All attributes flagged as having a value required must be supplied.",
-            code=error_code_enum.REQUIRED.value,  # type: ignore
+            code=error_code_enum.REQUIRED.value,
             params={"attributes": ids},
         )
         errors.append(error)

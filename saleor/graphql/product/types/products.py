@@ -9,15 +9,11 @@ from graphene import relay
 from promise import Promise
 
 from ....attribute import models as attribute_models
-from ....core.permissions import (
-    AuthorizationFilters,
-    OrderPermissions,
-    ProductPermissions,
-    has_one_of_permissions,
-)
-from ....core.tracing import traced_resolver
 from ....core.utils import build_absolute_uri, get_currency_for_country
 from ....core.weight import convert_weight_to_default_weight_unit
+from ....permission.auth_filters import AuthorizationFilters
+from ....permission.enums import OrderPermissions, ProductPermissions
+from ....permission.utils import has_one_of_permissions
 from ....product import models
 from ....product.models import ALL_PRODUCTS_PERMISSIONS
 from ....product.utils import calculate_revenue_for_variant
@@ -55,6 +51,7 @@ from ...core.connection import (
 from ...core.descriptions import (
     ADDED_IN_31,
     ADDED_IN_39,
+    ADDED_IN_310,
     DEPRECATED_IN_3X_FIELD,
     DEPRECATED_IN_3X_INPUT,
     PREVIEW_FEATURE,
@@ -68,6 +65,8 @@ from ...core.fields import (
     JSONString,
     PermissionsField,
 )
+from ...core.scalars import Date
+from ...core.tracing import traced_resolver
 from ...core.types import (
     Image,
     ModelObjectType,
@@ -242,7 +241,7 @@ class PreorderData(graphene.ObjectType):
 
 
 @federated_entity("id channel")
-class ProductVariant(ChannelContextTypeWithMetadata, ModelObjectType):
+class ProductVariant(ChannelContextTypeWithMetadata[models.ProductVariant]):
     id = graphene.GlobalID(required=True)
     name = graphene.String(required=True)
     sku = graphene.String()
@@ -361,6 +360,10 @@ class ProductVariant(ChannelContextTypeWithMetadata, ModelObjectType):
     )
     created = graphene.DateTime(required=True)
     updated_at = graphene.DateTime(required=True)
+    external_reference = graphene.String(
+        description=f"External ID of this product. {ADDED_IN_310}",
+        required=False,
+    )
 
     class Meta:
         default_resolver = ChannelContextType.resolver_with_context
@@ -801,7 +804,7 @@ class ProductVariantCountableConnection(CountableConnection):
 
 
 @federated_entity("id channel")
-class Product(ChannelContextTypeWithMetadata, ModelObjectType):
+class Product(ChannelContextTypeWithMetadata[models.Product]):
     id = graphene.GlobalID(required=True)
     seo_title = graphene.String()
     seo_description = graphene.String()
@@ -926,7 +929,7 @@ class Product(ChannelContextTypeWithMetadata, ModelObjectType):
         type_name="product",
         resolver=ChannelContextType.resolve_translation,
     )
-    available_for_purchase = graphene.Date(
+    available_for_purchase = Date(
         description="Date when product is available for purchase.",
         deprecation_reason=(
             f"{DEPRECATED_IN_3X_FIELD} "
@@ -948,6 +951,10 @@ class Product(ChannelContextTypeWithMetadata, ModelObjectType):
         ),
         required=False,
         permissions=[AuthorizationFilters.AUTHENTICATED_STAFF_USER],
+    )
+    external_reference = graphene.String(
+        description=f"External ID of this product. {ADDED_IN_310}",
+        required=False,
     )
 
     class Meta:
@@ -1268,9 +1275,21 @@ class Product(ChannelContextTypeWithMetadata, ModelObjectType):
 
         def sort_media(media) -> list[ProductMedia]:
             reversed = sort_by["direction"] == "-"
+
+            # Nullable first,
+            # achieved by adding the number of nonnull fields as firt element of tuple
+            def key(x):
+                values_tuple = tuple(
+                    getattr(x, field)
+                    for field in sort_by["field"]
+                    if getattr(x, field) is not None
+                )
+                values_tuple = (len(values_tuple),) + values_tuple
+                return values_tuple
+
             media_sorted = sorted(
                 media,
-                key=lambda x: tuple(getattr(x, field) for field in sort_by["field"]),
+                key=key,
                 reverse=reversed,
             )
             return media_sorted
@@ -1531,7 +1550,7 @@ class ProductCountableConnection(CountableConnection):
 
 
 @federated_entity("id")
-class ProductType(ModelObjectType):
+class ProductType(ModelObjectType[models.ProductType]):
     id = graphene.GlobalID(required=True)
     name = graphene.String(required=True)
     slug = graphene.String(required=True)
@@ -1691,7 +1710,7 @@ class ProductType(ModelObjectType):
         requestor = get_user_or_app_from_context(info.context)
         if channel is None:
             channel = get_default_channel_slug_or_graphql_error()
-        qs = root.products.visible_to_user(requestor, channel)  # type: ignore
+        qs = root.products.visible_to_user(requestor, channel)
         qs = ChannelQsContext(qs=qs, channel_slug=channel)
         kwargs["channel"] = channel
         return create_connection_slice(qs, info, kwargs, ProductCountableConnection)
@@ -1730,7 +1749,7 @@ class ProductTypeCountableConnection(CountableConnection):
 
 
 @federated_entity("id")
-class ProductMedia(ModelObjectType):
+class ProductMedia(ModelObjectType[models.ProductMedia]):
     id = graphene.GlobalID(required=True)
     sort_order = graphene.Int()
     alt = graphene.String(required=True)
@@ -1759,7 +1778,7 @@ class ProductMedia(ModelObjectType):
 
         def _resolve_url(thumbnail):
             url = get_image_or_proxy_url(
-                thumbnail, root.id, "ProductMedia", size, format
+                thumbnail, str(root.id), "ProductMedia", size, format
             )
             return build_absolute_uri(url)
 
@@ -1809,7 +1828,7 @@ class ProductImage(graphene.ObjectType):
 
         def _resolve_url(thumbnail):
             url = get_image_or_proxy_url(
-                thumbnail, root.id, "ProductMedia", size, format
+                thumbnail, str(root.id), "ProductMedia", size, format
             )
             return build_absolute_uri(url)
 

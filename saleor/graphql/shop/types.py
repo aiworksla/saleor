@@ -9,9 +9,9 @@ from phonenumbers import COUNTRY_CODE_TO_REGION_CODE
 from ... import __version__
 from ...account import models as account_models
 from ...channel import models as channel_models
-from ...core.permissions import AuthorizationFilters, SitePermissions, get_permissions
-from ...core.tracing import traced_resolver
 from ...core.utils import build_absolute_uri
+from ...permission.auth_filters import AuthorizationFilters
+from ...permission.enums import SitePermissions, get_permissions
 from ...site import models as site_models
 from ..account.types import Address, AddressInput, StaffNotificationRecipient
 from ..checkout.types import PaymentGateway
@@ -24,6 +24,7 @@ from ..core.descriptions import (
 )
 from ..core.enums import LanguageCodeEnum, WeightUnitsEnum
 from ..core.fields import PermissionsField
+from ..core.tracing import traced_resolver
 from ..core.types import (
     CountryDisplay,
     LanguageDisplay,
@@ -56,7 +57,7 @@ class Domain(graphene.ObjectType):
         description = "Represents shop's domain."
 
 
-class OrderSettings(ModelObjectType):
+class OrderSettings(ModelObjectType[site_models.SiteSettings]):
     automatically_confirm_all_new_orders = graphene.Boolean(required=True)
     automatically_fulfill_non_shippable_gift_card = graphene.Boolean(required=True)
 
@@ -65,7 +66,7 @@ class OrderSettings(ModelObjectType):
         model = site_models.SiteSettings
 
 
-class GiftCardSettings(ModelObjectType):
+class GiftCardSettings(ModelObjectType[site_models.SiteSettings]):
     expiry_type = GiftCardSettingsExpiryTypeEnum(
         description="The gift card expiry type settings.", required=True
     )

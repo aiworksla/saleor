@@ -1,77 +1,16 @@
-from typing import TYPE_CHECKING, Collection, Union
+from typing import TYPE_CHECKING, Iterable, Union
 
-from .auth_filters import (
-    AuthorizationFilters,
-    is_app,
-    is_staff_user,
-    is_user,
-    resolve_authorization_filter_fn,
-)
-from .enums import (
-    PERMISSIONS_ENUMS,
-    AccountPermissions,
-    AppPermission,
-    BasePermissionEnum,
-    ChannelPermissions,
-    CheckoutPermissions,
-    DiscountPermissions,
-    GiftcardPermissions,
-    MenuPermissions,
-    OrderPermissions,
-    PagePermissions,
-    PageTypePermissions,
-    PaymentPermissions,
-    PluginsPermissions,
-    ProductPermissions,
-    ProductTypePermissions,
-    ShippingPermissions,
-    SitePermissions,
-    get_permission_names,
-    get_permissions,
-    get_permissions_codename,
-    get_permissions_enum_dict,
-    get_permissions_enum_list,
-    get_permissions_from_codenames,
-    get_permissions_from_names,
-    split_permission_codename,
-)
-
-__all__ = [
-    "PERMISSIONS_ENUMS",
-    "is_app",
-    "is_staff_user",
-    "is_user",
-    "AppPermission",
-    "ChannelPermissions",
-    "CheckoutPermissions",
-    "DiscountPermissions",
-    "GiftcardPermissions",
-    "MenuPermissions",
-    "OrderPermissions",
-    "PagePermissions",
-    "PageTypePermissions",
-    "PaymentPermissions",
-    "PluginsPermissions",
-    "ProductPermissions",
-    "ProductTypePermissions",
-    "ShippingPermissions",
-    "SitePermissions",
-    "get_permission_names",
-    "get_permissions",
-    "get_permissions_codename",
-    "get_permissions_enum_dict",
-    "get_permissions_enum_list",
-    "get_permissions_from_codenames",
-    "get_permissions_from_names",
-    "split_permission_codename",
-]
+from .auth_filters import AuthorizationFilters, resolve_authorization_filter_fn
+from .enums import AccountPermissions, BasePermissionEnum
 
 if TYPE_CHECKING:
-    from ...account.models import User
-    from ...app.models import App
+    from ..account.models import User
+    from ..app.models import App
 
 
-def one_of_permissions_or_auth_filter_required(context, permissions):
+def one_of_permissions_or_auth_filter_required(
+    context, permissions: Iterable[BasePermissionEnum]
+):
     """Determine whether user or app has rights to perform an action.
 
     The `context` parameter is the Context instance associated with the request.
@@ -111,9 +50,9 @@ def one_of_permissions_or_auth_filter_required(context, permissions):
 
 
 def permission_required(
-    requestor: Union["User", "App"], perms: Collection[BasePermissionEnum]
+    requestor: Union["User", "App", None], perms: Iterable[BasePermissionEnum]
 ) -> bool:
-    from ...account.models import User
+    from ..account.models import User
 
     if isinstance(requestor, User):
         return requestor.has_perms(perms)
@@ -126,10 +65,12 @@ def permission_required(
 
 
 def has_one_of_permissions(
-    requestor: Union["User", "App"], permissions: Collection[BasePermissionEnum]
+    requestor: Union["User", "App", None], permissions: Iterable[BasePermissionEnum]
 ) -> bool:
     if not permissions:
         return True
+    if not requestor:
+        return False
     for perm in permissions:
         if permission_required(requestor, (perm,)):
             return True
@@ -137,7 +78,7 @@ def has_one_of_permissions(
 
 
 def message_one_of_permissions_required(
-    permissions: Collection[BasePermissionEnum],
+    permissions: Iterable[BasePermissionEnum],
 ) -> str:
     permission_msg = ", ".join([p.name for p in permissions])
     return f"\n\nRequires one of the following permissions: {permission_msg}."

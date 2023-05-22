@@ -4,14 +4,16 @@ import graphene
 import pytz
 from django.core.exceptions import ValidationError
 
-from .....core.permissions import ProductPermissions
 from .....core.utils.date_time import convert_to_utc_date_time
+from .....permission.enums import ProductPermissions
 from .....product import models
 from .....product.error_codes import CollectionErrorCode
 from ....channel import ChannelContext
+from ....core import ResolveInfo
 from ....core.descriptions import ADDED_IN_38, DEPRECATED_IN_3X_INPUT, RICH_CONTENT
 from ....core.fields import JSONString
 from ....core.mutations import ModelMutation
+from ....core.scalars import Date
 from ....core.types import CollectionError, NonNullList, SeoInput, Upload
 from ....core.validators import clean_seo_fields, validate_slug_and_generate_if_needed
 from ....core.validators.file import clean_image_file
@@ -32,7 +34,7 @@ class CollectionInput(graphene.InputObjectType):
     background_image = Upload(description="Background image file.")
     background_image_alt = graphene.String(description="Alt text for an image.")
     seo = SeoInput(description="Search engine optimization fields.")
-    publication_date = graphene.Date(
+    publication_date = Date(
         description=(f"Publication date. ISO 8601 standard. {DEPRECATED_IN_3X_INPUT}")
     )
     metadata = NonNullList(
@@ -76,8 +78,8 @@ class CollectionCreate(ModelMutation):
         support_private_meta_field = True
 
     @classmethod
-    def clean_input(cls, info, instance, data):
-        cleaned_input = super().clean_input(info, instance, data)
+    def clean_input(cls, info: ResolveInfo, instance, data, **kwargs):
+        cleaned_input = super().clean_input(info, instance, data, **kwargs)
         try:
             cleaned_input = validate_slug_and_generate_if_needed(
                 instance, "name", cleaned_input
@@ -97,7 +99,7 @@ class CollectionCreate(ModelMutation):
         return cleaned_input
 
     @classmethod
-    def post_save_action(cls, info, instance, cleaned_input):
+    def post_save_action(cls, info: ResolveInfo, instance, cleaned_input):
         manager = get_plugin_manager_promise(info.context).get()
         cls.call_event(manager.collection_created, instance)
 
@@ -106,7 +108,7 @@ class CollectionCreate(ModelMutation):
             cls.call_event(manager.product_updated, product)
 
     @classmethod
-    def perform_mutation(cls, _root, info, **kwargs):
+    def perform_mutation(cls, _root, info: ResolveInfo, /, **kwargs):
         result = super().perform_mutation(_root, info, **kwargs)
         return CollectionCreate(
             collection=ChannelContext(node=result.collection, channel_slug=None)

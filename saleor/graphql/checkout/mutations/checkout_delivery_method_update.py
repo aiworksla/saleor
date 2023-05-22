@@ -12,6 +12,7 @@ from ....checkout.fetch import (
 )
 from ....checkout.utils import (
     delete_external_shipping_id,
+    get_or_create_checkout_metadata,
     invalidate_checkout_prices,
     is_shipping_required,
     set_external_shipping_id,
@@ -22,6 +23,7 @@ from ....shipping import interface as shipping_interface
 from ....shipping import models as shipping_models
 from ....shipping.utils import convert_to_shipping_method_data
 from ....warehouse import models as warehouse_models
+from ...core import ResolveInfo
 from ...core.descriptions import (
     ADDED_IN_31,
     ADDED_IN_34,
@@ -67,7 +69,13 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
 
     @classmethod
     def perform_on_shipping_method(
-        cls, info, shipping_method_id, checkout_info, lines, checkout, manager
+        cls,
+        info: ResolveInfo,
+        shipping_method_id,
+        checkout_info,
+        lines,
+        checkout,
+        manager,
     ):
         shipping_method = cls.get_node_or_error(
             info,
@@ -79,14 +87,11 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
             ),
         )
 
-        delivery_method = convert_to_shipping_method_data(
-            shipping_method,
-            shipping_models.ShippingMethodChannelListing.objects.filter(
-                shipping_method=shipping_method,
-                channel=checkout_info.channel,
-            ).first(),
-        )
-        if shipping_method and not delivery_method:
+        listing = shipping_models.ShippingMethodChannelListing.objects.filter(
+            shipping_method=shipping_method,
+            channel=checkout_info.channel,
+        ).first()
+        if not listing:
             raise ValidationError(
                 {
                     "delivery_method_id": ValidationError(
@@ -95,6 +100,7 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
                     )
                 }
             )
+        delivery_method = convert_to_shipping_method_data(shipping_method, listing)
 
         cls._check_delivery_method(
             checkout_info, lines, shipping_method=delivery_method, collection_point=None
@@ -114,7 +120,13 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
 
     @classmethod
     def perform_on_external_shipping_method(
-        cls, info, shipping_method_id, checkout_info, lines, checkout, manager
+        cls,
+        info: ResolveInfo,
+        shipping_method_id,
+        checkout_info,
+        lines,
+        checkout,
+        manager,
     ):
         delivery_method = manager.get_shipping_method(
             checkout=checkout,
@@ -127,7 +139,7 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
                 {
                     "delivery_method_id": ValidationError(
                         f"Couldn't resolve to a node: ${shipping_method_id}",
-                        code=CheckoutErrorCode.NOT_FOUND,
+                        code=CheckoutErrorCode.NOT_FOUND.value,
                     )
                 }
             )
@@ -150,7 +162,13 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
 
     @classmethod
     def perform_on_collection_point(
-        cls, info, collection_point_id, checkout_info, lines, checkout, manager
+        cls,
+        info: ResolveInfo,
+        collection_point_id,
+        checkout_info,
+        lines,
+        checkout,
+        manager,
     ):
         collection_point = cls.get_node_or_error(
             info,
@@ -231,11 +249,15 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
         )
         checkout.save(
             update_fields=[
-                "private_metadata",
                 "shipping_method",
                 "collection_point",
             ]
             + invalidate_prices_updated_fields
+        )
+        get_or_create_checkout_metadata(checkout).save(
+            update_fields=[
+                "private_metadata",
+            ]
         )
         cls.call_event(manager.checkout_updated, checkout)
 
@@ -263,20 +285,14 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
     @classmethod
     def perform_mutation(
         cls,
-        _,
+        _root,
         info,
+        /,
         token=None,
         id=None,
         delivery_method_id=None,
     ):
-        checkout = get_checkout(
-            cls,
-            info,
-            checkout_id=None,
-            token=token,
-            id=id,
-            error_class=CheckoutErrorCode,
-        )
+        checkout = get_checkout(cls, info, checkout_id=None, token=token, id=id)
 
         manager = get_plugin_manager_promise(info.context).get()
         lines, unavailable_variant_pks = fetch_checkout_lines(checkout)
@@ -300,7 +316,7 @@ class CheckoutDeliveryMethodUpdate(BaseMutation):
                 {
                     "delivery_method": ValidationError(
                         ERROR_DOES_NOT_SHIP,
-                        code=CheckoutErrorCode.SHIPPING_NOT_REQUIRED,
+                        code=CheckoutErrorCode.SHIPPING_NOT_REQUIRED.value,
                     )
                 }
             )

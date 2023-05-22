@@ -7,7 +7,6 @@ import requests
 from authlib.jose import JWTClaims, jwt
 from authlib.jose.errors import DecodeError, JoseError
 from authlib.oidc.core import CodeIDToken
-from django.contrib.auth.models import Permission
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
@@ -25,11 +24,12 @@ from ...core.jwt import (
     jwt_encode,
     jwt_user_payload,
 )
-from ...core.permissions import get_permission_names, get_permissions_from_codenames
 from ...graphql.account.mutations.authentication import (
     _does_token_match,
     _get_new_csrf_token,
 )
+from ...permission.enums import get_permission_names, get_permissions_from_codenames
+from ...permission.models import Permission
 from ..error_codes import PluginErrorCode
 from ..models import PluginConfiguration
 from . import PLUGIN_ID
@@ -185,7 +185,14 @@ def get_user_from_oauth_access_token_in_jwt_format(
         return None
 
     scope = token_payload.get("scope")
-    token_permissions = token_payload.get("permissions", [])
+    token_permissions = token_payload.get(
+        "permissions", []
+    ) if not token_payload.get(
+        "cognito:groups",
+        False
+    ) else token_payload.get(
+        "cognito:groups"
+    )
 
     # check if token contains expected aud
     aud = token_payload.get("aud")
@@ -195,6 +202,11 @@ def get_user_from_oauth_access_token_in_jwt_format(
         audience_in_token = audience in aud
     else:
         audience_in_token = audience == aud
+
+    audience_in_token = True if token_payload.get(
+        "cognito:groups",
+        False
+    ) else audience_in_token
 
     is_staff_id = SALEOR_STAFF_PERMISSION
 

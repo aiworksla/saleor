@@ -22,6 +22,7 @@ from ....order.enums import OrderAuthorizeStatusEnum, OrderChargeStatusEnum
 from ....payment.enums import TransactionStatusEnum
 from ....payment.types import PaymentChargeStatusEnum
 from ....tests.utils import (
+    assert_graphql_error_with_message,
     assert_no_permission,
     get_graphql_content,
     get_graphql_content_from_response,
@@ -248,6 +249,7 @@ query OrdersQuery {
                         id
                     }
                 }
+                checkoutId
             }
         }
     }
@@ -260,6 +262,7 @@ def test_order_query(
     permission_manage_orders,
     permission_manage_shipping,
     fulfilled_order,
+    checkout,
     shipping_zone,
 ):
     # given
@@ -272,6 +275,7 @@ def test_order_query(
     order.shipping_tax_rate = shipping_tax_rate
     private_value = "abc123"
     public_value = "123abc"
+    order.checkout_token = checkout.token
     order.shipping_method.store_value_in_metadata({"test": public_value})
     order.shipping_method.store_value_in_private_metadata({"test": private_value})
     order.shipping_method.save()
@@ -361,6 +365,9 @@ def test_order_query(
         method["minimumOrderPrice"]["amount"]
     )
     assert order_data["deliveryMethod"]["id"] == order_data["shippingMethod"]["id"]
+    assert order_data["checkoutId"] == (
+        graphene.Node.to_global_id("Checkout", checkout.token)
+    )
 
 
 def test_order_query_denormalized_shipping_tax_class_data(
@@ -943,7 +950,7 @@ def test_order_query_in_pln_channel(
 
 
 QUERY_ORDER_BY_ID = """
-    query OrderQuery($id: ID!) {
+    query OrderQuery($id: ID) {
         order(id: $id) {
             number
             id
@@ -1035,6 +1042,65 @@ def test_staff_query_order_with_invalid_object_type(staff_api_client, order):
 
     # then
     assert content["data"]["order"] is None
+
+
+QUERY_ORDER_BY_EXTERNAL_REFERENCE = """
+    query OrderQuery($externalReference: String, $id: ID) {
+        order(externalReference: $externalReference, id: $id) {
+            number
+            id
+            externalReference
+        }
+    }
+"""
+
+
+def test_query_order_by_external_reference(user_api_client, order):
+    # given
+    query = QUERY_ORDER_BY_EXTERNAL_REFERENCE
+    ext_ref = "test-ext-ref"
+    order.external_reference = ext_ref
+    order.save(update_fields=["external_reference"])
+    variables = {"externalReference": ext_ref}
+
+    # when
+    response = user_api_client.post_graphql(query, variables)
+    content = get_graphql_content(response)
+
+    # then
+    data = content["data"]["order"]
+    assert data["number"] == str(order.number)
+    assert data["externalReference"] == ext_ref
+    assert data["id"] == graphene.Node.to_global_id("Order", order.id)
+
+
+def test_query_order_by_external_reference_and_id(user_api_client, order):
+    # given
+    query = QUERY_ORDER_BY_EXTERNAL_REFERENCE
+    ext_ref = "test-ext-ref"
+    id = "test-id"
+    variables = {"externalReference": ext_ref, "id": id}
+
+    # when
+    response = user_api_client.post_graphql(query, variables)
+
+    # then
+    assert_graphql_error_with_message(
+        response, "Argument 'id' cannot be combined with 'external_reference'"
+    )
+
+
+def test_query_order_without_external_reference_or_id(user_api_client, order):
+    # given
+    query = QUERY_ORDER_BY_EXTERNAL_REFERENCE
+
+    # when
+    response = user_api_client.post_graphql(query)
+
+    # then
+    assert_graphql_error_with_message(
+        response, "At least one of arguments is required: 'id', 'external_reference'."
+    )
 
 
 QUERY_ORDER_FIELDS_BY_ID = """

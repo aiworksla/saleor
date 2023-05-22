@@ -2197,6 +2197,34 @@ def test_query_product_media_sorting_default(
     assert media1 <= media2
 
 
+def test_query_product_media_sorting_default_and_one_sort_order_null(
+    staff_api_client, product_with_image_list_and_one_null_sort_order, channel_USD
+):
+    # given
+    sort_by = None
+    variables = {
+        "id": graphene.Node.to_global_id(
+            "Product", product_with_image_list_and_one_null_sort_order.pk
+        ),
+        "channel": channel_USD.slug,
+        "sort_by": sort_by,
+    }
+
+    # when
+    response = staff_api_client.post_graphql(
+        QUERY_PRODUCT_WITH_SORTED_MEDIA,
+        variables,
+    )
+
+    # then
+    content = get_graphql_content(response)
+    media = content["data"]["product"]["media"]
+    media1 = media[0]["sortOrder"]
+    media2 = media[1]["sortOrder"]
+    assert media1 is None
+    assert media2 is not None
+
+
 QUERY_PRODUCT_WITH_ATTRIBUTE = """
 query Product($id: ID!, $channel: String, $slug: String!){
         product(id: $id, channel: $channel){
@@ -2355,3 +2383,46 @@ def test_fetch_all_products_with_availability_data(
             }
         }
         assert data in product_data
+
+
+QUERY_PRODUCT_BY_EXTERNAL_REFERENCE = """
+    query ($id: ID, $externalReference: String, $slug: String, $channel:String){
+        product(
+            id: $id,
+            slug: $slug,
+            externalReference: $externalReference,
+            channel: $channel
+        ) {
+            id
+            name
+            externalReference
+        }
+    }
+"""
+
+
+def test_product_query_by_external_reference(
+    staff_api_client, permission_manage_products, product, channel_USD
+):
+    # given
+    product.external_reference = "test-ext-id"
+    product.save(update_fields=["external_reference"])
+    variables = {
+        "externalReference": product.external_reference,
+        "channel": channel_USD.slug,
+    }
+
+    # when
+    response = staff_api_client.post_graphql(
+        QUERY_PRODUCT_BY_EXTERNAL_REFERENCE,
+        variables=variables,
+        permissions=(permission_manage_products,),
+        check_no_permissions=False,
+    )
+    content = get_graphql_content(response)
+
+    # then
+    product_data = content["data"]["product"]
+    assert product_data is not None
+    assert product_data["name"] == product.name
+    assert product_data["externalReference"] == product.external_reference

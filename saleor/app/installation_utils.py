@@ -5,8 +5,8 @@ from django.urls import reverse
 from requests import HTTPError, Response
 
 from ..app.headers import AppHeaders, DeprecatedAppHeaders
-from ..core.permissions import get_permission_names
 from ..core.utils import build_absolute_uri
+from ..permission.enums import get_permission_names
 from ..plugins.manager import PluginsManager
 from ..webhook.models import Webhook, WebhookEvent
 from .manifest_validations import clean_manifest_data
@@ -104,7 +104,7 @@ def install_app(app_installation: AppInstallation, activate: bool = False):
             )
     WebhookEvent.objects.bulk_create(webhook_events)
 
-    _, token = app.tokens.create(name="Default token")
+    _, token = app.tokens.create(name="Default token")  # type: ignore[call-arg] # calling create on a related manager # noqa: E501
 
     try:
         send_app_token(target_url=manifest_data.get("tokenTargetUrl"), token=token)

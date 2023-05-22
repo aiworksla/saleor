@@ -1,7 +1,7 @@
 import graphene
 
 from ....app import models
-from ....core.permissions import AppPermission, get_permissions
+from ....permission.enums import AppPermission, get_permissions
 from ...core.enums import PermissionEnum
 from ...core.mutations import ModelMutation
 from ...core.types import AppError, NonNullList
@@ -44,8 +44,8 @@ class AppCreate(ModelMutation):
         error_type_field = "app_errors"
 
     @classmethod
-    def clean_input(cls, info, instance, data, input_cls=None):
-        cleaned_input = super().clean_input(info, instance, data, input_cls)
+    def clean_input(cls, info, instance, data, **kwargs):
+        cleaned_input = super().clean_input(info, instance, data, **kwargs)
         # clean and prepare permissions
         if "permissions" in cleaned_input:
             requestor = get_user_or_app_from_context(info.context)
@@ -56,7 +56,7 @@ class AppCreate(ModelMutation):
 
     @classmethod
     @staff_member_required
-    def perform_mutation(cls, _root, info, **data):
+    def perform_mutation(cls, _root, info, /, **data):
         instance = cls.get_instance(info, **data)
         data = data.get("input")
         cleaned_input = cls.clean_input(info, instance, data)
