@@ -285,12 +285,9 @@ WebhookErrorCode.doc_category = DOC_CATEGORY_WEBHOOKS
 WebhookDryRunErrorCode = graphene.Enum.from_enum(
     webhook_error_codes.WebhookDryRunErrorCode
 )
-<<<<<<< HEAD
-=======
 WebhookDryRunErrorCode.doc_category = DOC_CATEGORY_WEBHOOKS
 
 WebhookTriggerErrorCode = graphene.Enum.from_enum(
     webhook_error_codes.WebhookTriggerErrorCode
 )
 WebhookTriggerErrorCode.doc_category = DOC_CATEGORY_WEBHOOKS
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
