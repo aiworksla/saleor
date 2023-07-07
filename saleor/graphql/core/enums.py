@@ -125,6 +125,34 @@ VolumeUnitsEnum = to_enum(VolumeUnits)
 WeightUnitsEnum = to_enum(WeightUnits)
 unit_enums = [DistanceUnitsEnum, AreaUnitsEnum, VolumeUnitsEnum, WeightUnitsEnum]
 
+
+class ErrorPolicy:
+    IGNORE_FAILED = "ignore_failed"
+    REJECT_EVERYTHING = "reject_everything"
+    REJECT_FAILED_ROWS = "reject_failed_rows"
+
+    CHOICES = [
+        (IGNORE_FAILED, "Ignore failed"),
+        (REJECT_EVERYTHING, "Reject everything"),
+        (REJECT_FAILED_ROWS, "Reject failed rows"),
+    ]
+
+
+def error_policy_enum_description(enum):
+    if enum == ErrorPolicyEnum.IGNORE_FAILED:
+        return (
+            "Save what is possible within a single row. If there are errors in an "
+            "input data row, try to save it partially and skip the invalid part."
+        )
+    if enum == ErrorPolicyEnum.REJECT_FAILED_ROWS:
+        return "Reject rows with errors."
+    if enum == ErrorPolicyEnum.REJECT_EVERYTHING:
+        return "Reject all rows if there is at least one error in any of them."
+    return None
+
+
+ErrorPolicyEnum = to_enum(ErrorPolicy, description=error_policy_enum_description)
+
 AccountErrorCode = graphene.Enum.from_enum(account_error_codes.AccountErrorCode)
 AccountErrorCode.doc_category = DOC_CATEGORY_USERS
 
@@ -212,6 +240,10 @@ TransactionRequestActionErrorCode = graphene.Enum.from_enum(
 )
 TransactionRequestActionErrorCode.doc_category = DOC_CATEGORY_PAYMENTS
 
+TransactionRequestRefundForGrantedRefundErrorCode = graphene.Enum.from_enum(
+    payment_error_codes.TransactionRequestRefundForGrantedRefundErrorCode
+)
+TransactionRequestRefundForGrantedRefundErrorCode.doc_category = DOC_CATEGORY_PAYMENTS
 TransactionEventReportErrorCode = graphene.Enum.from_enum(
     payment_error_codes.TransactionEventReportErrorCode
 )
