@@ -66,6 +66,7 @@ from ..enums import (
     PluginErrorCode,
     ProductBulkCreateErrorCode,
     ProductErrorCode,
+    ProductVariantBulkErrorCode,
     ShippingErrorCode,
     ShopErrorCode,
     StockBulkUpdateErrorCode,
@@ -77,25 +78,27 @@ from ..enums import (
     TransactionInitializeErrorCode,
     TransactionProcessErrorCode,
     TransactionRequestActionErrorCode,
+    TransactionRequestRefundForGrantedRefundErrorCode,
     TransactionUpdateErrorCode,
     TranslationErrorCode,
     UploadErrorCode,
     WarehouseErrorCode,
     WebhookDryRunErrorCode,
     WebhookErrorCode,
+    WebhookTriggerErrorCode,
     WeightUnitsEnum,
 )
 from ..scalars import Date, PositiveDecimal
 from ..tracing import traced_resolver
 from .base import BaseObjectType
 from .money import VAT
+from .upload import Upload
 
 if TYPE_CHECKING:
     from .. import ResolveInfo
 
 # deprecated - this is temporary constant that contains the graphql types
 # which has double id available - uuid and old int id
-
 TYPES_WITH_DOUBLE_ID_AVAILABLE = ["Order", "OrderLine", "OrderDiscount", "CheckoutLine"]
 
 
@@ -114,8 +117,8 @@ class CountryDisplay(graphene.ObjectType):
         VAT,
         description="Country tax.",
         deprecation_reason=(
-            f"{DEPRECATED_IN_3X_FIELD} Use `TaxClassCountryRate` type to manage tax "
-            "rates per country."
+            f"{DEPRECATED_IN_3X_FIELD} Always returns `null`. Use `TaxClassCountryRate`"
+            " type to manage tax rates per country."
         ),
     )
 
@@ -588,6 +591,15 @@ class TransactionUpdateError(Error):
 
 class TransactionRequestActionError(Error):
     code = TransactionRequestActionErrorCode(
+        description="The error code.", required=True
+    )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_PAYMENTS
+
+
+class TransactionRequestRefundForGrantedRefundError(Error):
+    code = TransactionRequestRefundForGrantedRefundErrorCode(
         description="The error code.", required=True
     )
 
