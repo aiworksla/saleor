@@ -603,6 +603,7 @@ CELERY_BEAT_SCHEDULE = {
     "update-products-search-vectors": {
         "task": "saleor.product.tasks.update_products_search_vector_task",
         "schedule": timedelta(seconds=20),
+        "options": {"expires": BEAT_UPDATE_SEARCH_EXPIRE_AFTER_SEC},
     },
     "expire-orders": {
         "task": "saleor.order.tasks.expire_orders_task",
