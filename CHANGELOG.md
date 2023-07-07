@@ -319,8 +319,6 @@ Just so you know, changes mentioned in this section are in a preview state and c
 - [Preview] Add `webhookTrigger` mutation - #11687 by @zedzior
 - Fix adding an invalid label to meta fields - #11718 by @IKarbowiak
 - Add filter by `checkoutToken` to `Query.orders`. - #11689 by @kadewu
-
-### Other changes
 - [Preview] Attribute filters improvement - #11737 by @IKarbowiak
   - introduce `where` option on `attributes` query
   - add `search` option on `attributes` query
