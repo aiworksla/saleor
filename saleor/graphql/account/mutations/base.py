@@ -1,9 +1,12 @@
 from typing import cast
 
 import graphene
+from django.conf import settings
 from django.contrib.auth import password_validation
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.utils import timezone
 
 from ....account import events as account_events
 from ....account import models
@@ -28,8 +31,9 @@ from ...account.types import Address, AddressInput, User
 from ...app.dataloaders import get_app_promise
 from ...channel.utils import clean_channel, validate_channel
 from ...core import ResolveInfo
-from ...core.context import set_mutation_flag_in_context
-from ...core.descriptions import ADDED_IN_310
+from ...core.context import disallow_replica_in_context
+from ...core.descriptions import ADDED_IN_310, ADDED_IN_314
+from ...core.doc_category import DOC_CATEGORY_USERS
 from ...core.enums import LanguageCodeEnum
 from ...core.mutations import (
     BaseMutation,
@@ -37,7 +41,8 @@ from ...core.mutations import (
     ModelMutation,
     validation_error_to_error_type,
 )
-from ...core.types import AccountError
+from ...core.types import AccountError, BaseInputObjectType, NonNullList
+from ...meta.mutations import MetadataInput
 from ...plugins.dataloaders import get_plugin_manager_promise
 from .authentication import CreateToken
 
@@ -80,6 +85,7 @@ class SetPassword(CreateToken):
             "Sets the user's password from the token sent by email "
             "using the RequestPasswordReset mutation."
         )
+        doc_category = DOC_CATEGORY_USERS
         error_type_class = AccountError
         error_type_field = "account_errors"
 
@@ -87,7 +93,7 @@ class SetPassword(CreateToken):
     def mutate(  # type: ignore[override]
         cls, root, info: ResolveInfo, /, *, email, password, token
     ):
-        set_mutation_flag_in_context(info.context)
+        disallow_replica_in_context(info.context)
         manager = get_plugin_manager_promise(info.context).get()
         result = manager.perform_mutation(
             mutation_cls=cls,
@@ -156,12 +162,12 @@ class RequestPasswordReset(BaseMutation):
 
     class Meta:
         description = "Sends an email with the account password modification link."
+        doc_category = DOC_CATEGORY_USERS
         error_type_class = AccountError
         error_type_field = "account_errors"
 
     @classmethod
     def clean_user(cls, email, redirect_url):
-
         try:
             validate_storefront_url(redirect_url)
         except ValidationError as error:
@@ -179,6 +185,7 @@ class RequestPasswordReset(BaseMutation):
                     )
                 }
             )
+
         if not user.is_active:
             raise ValidationError(
                 {
@@ -188,6 +195,19 @@ class RequestPasswordReset(BaseMutation):
                     )
                 }
             )
+
+        if password_reset_time := user.last_password_reset_request:
+            delta = timezone.now() - password_reset_time
+            if delta.total_seconds() < settings.RESET_PASSWORD_LOCK_TIME:
+                raise ValidationError(
+                    {
+                        "email": ValidationError(
+                            "Password reset already requested",
+                            code=AccountErrorCode.PASSWORD_RESET_ALREADY_REQUESTED.value,
+                        )
+                    }
+                )
+
         return user
 
     @classmethod
@@ -213,6 +233,8 @@ class RequestPasswordReset(BaseMutation):
             channel_slug=channel_slug,
             staff=user.is_staff,
         )
+        user.last_password_reset_request = timezone.now()
+        user.save(update_fields=["last_password_reset_request"])
         return RequestPasswordReset()
 
 
@@ -233,6 +255,7 @@ class ConfirmAccount(BaseMutation):
         description = (
             "Confirm user account with token sent by email during registration."
         )
+        doc_category = DOC_CATEGORY_USERS
         error_type_class = AccountError
         error_type_field = "account_errors"
 
@@ -273,32 +296,45 @@ class PasswordChange(BaseMutation):
 
     class Arguments:
         old_password = graphene.String(
-            required=True, description="Current user password."
+            required=False, description="Current user password."
         )
         new_password = graphene.String(required=True, description="New user password.")
 
     class Meta:
         description = "Change the password of the logged in user."
+        doc_category = DOC_CATEGORY_USERS
         error_type_class = AccountError
         error_type_field = "account_errors"
         permissions = (AuthorizationFilters.AUTHENTICATED_USER,)
+
+    @staticmethod
+    def raise_invalid_credentials():
+        raise ValidationError(
+            {
+                "old_password": ValidationError(
+                    "Old password isn't valid.",
+                    code=AccountErrorCode.INVALID_CREDENTIALS.value,
+                )
+            }
+        )
 
     @classmethod
     def perform_mutation(cls, _root, info: ResolveInfo, /, **data):
         user = info.context.user
         user = cast(models.User, user)
-        old_password = data["old_password"]
+        old_password = data.get("old_password")
         new_password = data["new_password"]
 
-        if not user.check_password(old_password):
-            raise ValidationError(
-                {
-                    "old_password": ValidationError(
-                        "Old password isn't valid.",
-                        code=AccountErrorCode.INVALID_CREDENTIALS.value,
-                    )
-                }
-            )
+        if old_password is None:
+            # Spend time hashing useless password
+            # This prevents the outside actors from telling if user has
+            # unusable password set or not by measuring API's response time
+            make_password("waste-time")
+
+            if user.has_usable_password():
+                cls.raise_invalid_credentials()
+        elif not user.check_password(old_password):
+            cls.raise_invalid_credentials()
         try:
             password_validation.validate_password(new_password, user)
         except ValidationError as error:
@@ -417,21 +453,39 @@ class BaseAddressDelete(ModelDeleteMutation):
         return response
 
 
-class UserInput(graphene.InputObjectType):
+class UserInput(BaseInputObjectType):
     first_name = graphene.String(description="Given name.")
     last_name = graphene.String(description="Family name.")
     email = graphene.String(description="The unique email address of the user.")
     is_active = graphene.Boolean(required=False, description="User account is active.")
     note = graphene.String(description="A note about the user.")
+    metadata = NonNullList(
+        MetadataInput,
+        description="Fields required to update the user metadata." + ADDED_IN_314,
+        required=False,
+    )
+    private_metadata = NonNullList(
+        MetadataInput,
+        description=(
+            "Fields required to update the user private metadata." + ADDED_IN_314
+        ),
+        required=False,
+    )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_USERS
 
 
-class UserAddressInput(graphene.InputObjectType):
+class UserAddressInput(BaseInputObjectType):
     default_billing_address = AddressInput(
         description="Billing address of the customer."
     )
     default_shipping_address = AddressInput(
         description="Shipping address of the customer."
     )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_USERS
 
 
 class CustomerInput(UserInput, UserAddressInput):
@@ -441,6 +495,9 @@ class CustomerInput(UserInput, UserAddressInput):
     external_reference = graphene.String(
         description="External ID of the customer." + ADDED_IN_310, required=False
     )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_USERS
 
 
 class UserCreateInput(CustomerInput):
@@ -456,6 +513,9 @@ class UserCreateInput(CustomerInput):
             "only one channel exists."
         )
     )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_USERS
 
 
 class BaseCustomerCreate(ModelMutation, I18nMixin):
@@ -559,3 +619,9 @@ class BaseCustomerCreate(ModelMutation, I18nMixin):
                 manager,
                 channel_slug,
             )
+
+    @classmethod
+    def post_save_action(cls, info: ResolveInfo, instance, cleaned_input):
+        if cleaned_input.get("metadata"):
+            manager = get_plugin_manager_promise(info.context).get()
+            cls.call_event(manager.customer_metadata_updated, instance)

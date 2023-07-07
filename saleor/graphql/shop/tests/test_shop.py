@@ -15,6 +15,7 @@ from ....shipping.models import ShippingMethod
 from ....site import GiftCardSettingsExpiryType
 from ....site.models import Site
 from ...account.enums import CountryCodeEnum
+from ...channel.enums import TransactionFlowStrategyEnum
 from ...core.utils import str_to_enum
 from ...tests.utils import assert_no_permission, get_graphql_content
 
@@ -273,6 +274,7 @@ def test_query_default_mail_sender_settings_not_set(
 def test_shop_digital_content_settings_mutation(
     staff_api_client, site_settings, permission_manage_settings
 ):
+    # given
     query = """
         mutation updateSettings($input: ShopSettingsInput!) {
             shopSettingsUpdate(input: $input) {
@@ -300,11 +302,14 @@ def test_shop_digital_content_settings_mutation(
     }
 
     assert not site_settings.automatic_fulfillment_digital_products
+
+    # when
     response = staff_api_client.post_graphql(
         query, variables, permissions=[permission_manage_settings]
     )
     content = get_graphql_content(response)
 
+    # then
     data = content["data"]["shopSettingsUpdate"]["shop"]
     assert data["automaticFulfillmentDigitalProducts"]
     assert data["defaultDigitalMaxDownloads"]
@@ -318,6 +323,7 @@ def test_shop_digital_content_settings_mutation(
 def test_shop_settings_mutation(
     staff_api_client, site_settings, permission_manage_settings
 ):
+    # given
     query = """
         mutation updateSettings($input: ShopSettingsInput!) {
             shopSettingsUpdate(input: $input) {
@@ -327,6 +333,8 @@ def test_shop_settings_mutation(
                     chargeTaxesOnShipping,
                     fulfillmentAutoApprove,
                     fulfillmentAllowUnpaid
+                    enableAccountConfirmationByEmail
+
                 }
                 errors {
                     field,
@@ -335,6 +343,7 @@ def test_shop_settings_mutation(
             }
         }
     """
+    assert site_settings.enable_account_confirmation_by_email
     charge_taxes_on_shipping = site_settings.charge_taxes_on_shipping
     new_charge_taxes_on_shipping = not charge_taxes_on_shipping
     variables = {
@@ -343,21 +352,29 @@ def test_shop_settings_mutation(
             "headerText": "Lorem ipsum",
             "chargeTaxesOnShipping": new_charge_taxes_on_shipping,
             "fulfillmentAllowUnpaid": False,
+            "enableAccountConfirmationByEmail": False,
         }
     }
+
+    # when
     response = staff_api_client.post_graphql(
         query, variables, permissions=[permission_manage_settings]
     )
     content = get_graphql_content(response)
     data = content["data"]["shopSettingsUpdate"]["shop"]
+
+    # then
     assert data["headerText"] == "Lorem ipsum"
     assert data["includeTaxesInPrices"] is False
     assert data["chargeTaxesOnShipping"] == new_charge_taxes_on_shipping
     assert data["fulfillmentAutoApprove"] is True
     assert data["fulfillmentAllowUnpaid"] is False
+    assert data["enableAccountConfirmationByEmail"] is False
+
     site_settings.refresh_from_db()
     assert not site_settings.include_taxes_in_prices
     assert site_settings.charge_taxes_on_shipping == new_charge_taxes_on_shipping
+    assert site_settings.enable_account_confirmation_by_email is False
 
 
 def test_shop_reservation_settings_mutation(
@@ -1332,6 +1349,8 @@ ORDER_SETTINGS_UPDATE_MUTATION = """
             orderSettings {
                 automaticallyConfirmAllNewOrders
                 automaticallyFulfillNonShippableGiftCard
+                markAsPaidStrategy
+                defaultTransactionFlowStrategy
             }
         }
     }
@@ -1339,71 +1358,142 @@ ORDER_SETTINGS_UPDATE_MUTATION = """
 
 
 def test_order_settings_update_by_staff(
-    staff_api_client, permission_manage_orders, site_settings
+    staff_api_client, permission_group_manage_orders, channel_USD, channel_PLN
 ):
-    assert site_settings.automatically_confirm_all_new_orders is True
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+
+    # when
     response = staff_api_client.post_graphql(
         ORDER_SETTINGS_UPDATE_MUTATION,
         {"confirmOrders": False, "fulfillGiftCards": False},
     )
     content = get_graphql_content(response)
+
+    # then
     response_settings = content["data"]["orderSettingsUpdate"]["orderSettings"]
     assert response_settings["automaticallyConfirmAllNewOrders"] is False
     assert response_settings["automaticallyFulfillNonShippableGiftCard"] is False
-    site_settings.refresh_from_db()
-    assert site_settings.automatically_confirm_all_new_orders is False
-    assert site_settings.automatically_fulfill_non_shippable_gift_card is False
+    assert (
+        response_settings["defaultTransactionFlowStrategy"]
+        == TransactionFlowStrategyEnum.CHARGE.name
+        == channel_USD.default_transaction_flow_strategy.upper()
+    )
+    channel_PLN.refresh_from_db()
+    channel_USD.refresh_from_db()
+    assert channel_PLN.automatically_confirm_all_new_orders is False
+    assert channel_PLN.automatically_fulfill_non_shippable_gift_card is False
+    assert channel_USD.automatically_confirm_all_new_orders is False
+    assert channel_USD.automatically_fulfill_non_shippable_gift_card is False
+
+
+def test_order_settings_update_by_staff_no_channel_access(
+    staff_api_client,
+    permission_group_all_perms_channel_USD_only,
+    channel_USD,
+    channel_PLN,
+):
+    # given
+    permission_group_all_perms_channel_USD_only.user_set.add(staff_api_client.user)
+    channel_USD.is_active = False
+    channel_USD.save(update_fields=["is_active"])
+
+    # when
+    response = staff_api_client.post_graphql(
+        ORDER_SETTINGS_UPDATE_MUTATION,
+        {"confirmOrders": False, "fulfillGiftCards": False},
+    )
+
+    # then
+    assert_no_permission(response)
 
 
 def test_order_settings_update_by_staff_nothing_changed(
-    staff_api_client, permission_manage_orders, site_settings
+    staff_api_client, permission_group_manage_orders, channel_USD, channel_PLN
 ):
-    assert site_settings.automatically_confirm_all_new_orders is True
-    staff_api_client.user.user_permissions.add(permission_manage_orders)
+    # given
+    permission_group_manage_orders.user_set.add(staff_api_client.user)
+    QUERY = """
+        mutation {
+            orderSettingsUpdate(
+                input: {}
+            ) {
+                orderSettings {
+                    automaticallyConfirmAllNewOrders
+                    automaticallyFulfillNonShippableGiftCard
+                }
+            }
+        }
+    """
+
+    # when
     response = staff_api_client.post_graphql(
-        ORDER_SETTINGS_UPDATE_MUTATION,
+        QUERY,
         {},
     )
     content = get_graphql_content(response)
+
+    # then
     response_settings = content["data"]["orderSettingsUpdate"]["orderSettings"]
     assert response_settings["automaticallyConfirmAllNewOrders"] is True
     assert response_settings["automaticallyFulfillNonShippableGiftCard"] is True
-    site_settings.refresh_from_db()
-    assert site_settings.automatically_confirm_all_new_orders is True
-    assert site_settings.automatically_fulfill_non_shippable_gift_card is True
+    channel_PLN.refresh_from_db()
+    channel_USD.refresh_from_db()
+    assert channel_PLN.automatically_confirm_all_new_orders is True
+    assert channel_PLN.automatically_fulfill_non_shippable_gift_card is True
+    assert channel_USD.automatically_confirm_all_new_orders is True
+    assert channel_USD.automatically_fulfill_non_shippable_gift_card is True
 
 
 def test_order_settings_update_by_app(
-    app_api_client, permission_manage_orders, site_settings
+    app_api_client, permission_manage_orders, channel_USD, channel_PLN
 ):
-    assert site_settings.automatically_confirm_all_new_orders is True
+    # given
     app_api_client.app.permissions.set([permission_manage_orders])
+
+    # when
     response = app_api_client.post_graphql(
         ORDER_SETTINGS_UPDATE_MUTATION,
         {"confirmOrders": False, "fulfillGiftCards": False},
     )
     content = get_graphql_content(response)
+
+    # then
     response_settings = content["data"]["orderSettingsUpdate"]["orderSettings"]
     assert response_settings["automaticallyConfirmAllNewOrders"] is False
     assert response_settings["automaticallyFulfillNonShippableGiftCard"] is False
-    site_settings.refresh_from_db()
-    assert site_settings.automatically_confirm_all_new_orders is False
-    assert site_settings.automatically_fulfill_non_shippable_gift_card is False
+    assert (
+        response_settings["defaultTransactionFlowStrategy"]
+        == TransactionFlowStrategyEnum.CHARGE.name
+        == channel_USD.default_transaction_flow_strategy.upper()
+    )
+    channel_PLN.refresh_from_db()
+    channel_USD.refresh_from_db()
+    assert channel_PLN.automatically_confirm_all_new_orders is False
+    assert channel_PLN.automatically_fulfill_non_shippable_gift_card is False
+    assert channel_USD.automatically_confirm_all_new_orders is False
+    assert channel_USD.automatically_fulfill_non_shippable_gift_card is False
 
 
 def test_order_settings_update_by_user_without_permissions(
-    user_api_client, permission_manage_orders, site_settings
+    user_api_client, channel_USD, channel_PLN
 ):
-    assert site_settings.automatically_confirm_all_new_orders is True
+    # given
+
+    # when
     response = user_api_client.post_graphql(
         ORDER_SETTINGS_UPDATE_MUTATION,
         {"confirmOrders": False, "fulfillGiftCards": False},
     )
+
+    # then
     assert_no_permission(response)
-    site_settings.refresh_from_db()
-    assert site_settings.automatically_confirm_all_new_orders is True
-    assert site_settings.automatically_fulfill_non_shippable_gift_card is True
+    channel_PLN.refresh_from_db()
+    channel_USD.refresh_from_db()
+    assert channel_PLN.automatically_confirm_all_new_orders is True
+    assert channel_PLN.automatically_fulfill_non_shippable_gift_card is True
+    assert channel_USD.automatically_confirm_all_new_orders is True
+    assert channel_USD.automatically_fulfill_non_shippable_gift_card is True
 
 
 ORDER_SETTINGS_QUERY = """
@@ -1416,33 +1506,57 @@ ORDER_SETTINGS_QUERY = """
 """
 
 
-def test_order_settings_query_as_staff(
-    staff_api_client, permission_manage_orders, site_settings
+def test_order_settings_query_one_channel(
+    staff_api_client, permission_manage_orders, channel_USD
 ):
-    assert site_settings.automatically_confirm_all_new_orders is True
-    assert site_settings.automatically_fulfill_non_shippable_gift_card is True
-
-    site_settings.automatically_confirm_all_new_orders = False
-    site_settings.automatically_fulfill_non_shippable_gift_card = False
-    site_settings.save(
-        update_fields=[
-            "automatically_confirm_all_new_orders",
-            "automatically_fulfill_non_shippable_gift_card",
-        ]
-    )
+    # given
+    channel_USD.automatically_confirm_all_new_orders = False
+    channel_USD.automatically_fulfill_non_shippable_gift_card = True
+    channel_USD.save()
 
     staff_api_client.user.user_permissions.add(permission_manage_orders)
+
+    # when
     response = staff_api_client.post_graphql(ORDER_SETTINGS_QUERY)
+
+    # then
     content = get_graphql_content(response)
 
     assert content["data"]["orderSettings"]["automaticallyConfirmAllNewOrders"] is False
+    assert (
+        content["data"]["orderSettings"]["automaticallyFulfillNonShippableGiftCard"]
+        is True
+    )
+
+
+def test_order_settings_query_multiple_channels(
+    staff_api_client, permission_manage_orders, channel_USD, channel_PLN
+):
+    # given
+    channel_USD.automatically_confirm_all_new_orders = False
+    channel_USD.automatically_fulfill_non_shippable_gift_card = True
+    channel_USD.save()
+
+    channel_PLN.automatically_confirm_all_new_orders = True
+    channel_PLN.automatically_fulfill_non_shippable_gift_card = False
+    channel_PLN.save()
+
+    staff_api_client.user.user_permissions.add(permission_manage_orders)
+
+    # when
+    response = staff_api_client.post_graphql(ORDER_SETTINGS_QUERY)
+
+    # then
+    content = get_graphql_content(response)
+
+    assert content["data"]["orderSettings"]["automaticallyConfirmAllNewOrders"] is True
     assert (
         content["data"]["orderSettings"]["automaticallyFulfillNonShippableGiftCard"]
         is False
     )
 
 
-def test_order_settings_query_as_user(user_api_client, site_settings):
+def test_order_settings_query_as_user(user_api_client, channel_USD, channel_PLN):
     response = user_api_client.post_graphql(ORDER_SETTINGS_QUERY)
     assert_no_permission(response)
 

@@ -6,13 +6,20 @@ from graphql import GraphQLError
 from ...permission.enums import ProductPermissions
 from ...permission.utils import has_one_of_permissions
 from ...product.models import ALL_PRODUCTS_PERMISSIONS
-from ..channel import ChannelContext
+from ...product.search import search_products
+from ..channel import ChannelContext, ChannelQsContext
 from ..channel.utils import get_default_channel_slug_or_graphql_error
 from ..core import ResolveInfo
 from ..core.connection import create_connection_slice, filter_connection_queryset
-from ..core.descriptions import ADDED_IN_310
+from ..core.descriptions import ADDED_IN_310, ADDED_IN_314, PREVIEW_FEATURE
+from ..core.doc_category import DOC_CATEGORY_PRODUCTS
 from ..core.enums import ReportingPeriod
-from ..core.fields import ConnectionField, FilterConnectionField, PermissionsField
+from ..core.fields import (
+    BaseField,
+    ConnectionField,
+    FilterConnectionField,
+    PermissionsField,
+)
 from ..core.tracing import traced_resolver
 from ..core.types import NonNullList
 from ..core.utils import from_global_id_or_error
@@ -27,6 +34,7 @@ from ..utils import get_user_or_app_from_context
 from .bulk_mutations.products import (
     CategoryBulkDelete,
     CollectionBulkDelete,
+    ProductBulkCreate,
     ProductBulkDelete,
     ProductMediaBulkDelete,
     ProductTypeBulkDelete,
@@ -42,6 +50,7 @@ from .filters import (
     ProductFilterInput,
     ProductTypeFilterInput,
     ProductVariantFilterInput,
+    ProductWhereInput,
 )
 from .mutations import (
     CategoryCreate,
@@ -150,6 +159,7 @@ class ProductQueries(graphene.ObjectType):
         permissions=[
             ProductPermissions.MANAGE_PRODUCTS,
         ],
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     digital_contents = ConnectionField(
         DigitalContentCountableConnection,
@@ -157,6 +167,7 @@ class ProductQueries(graphene.ObjectType):
         permissions=[
             ProductPermissions.MANAGE_PRODUCTS,
         ],
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     categories = FilterConnectionField(
         CategoryCountableConnection,
@@ -167,14 +178,16 @@ class ProductQueries(graphene.ObjectType):
             description="Filter categories by the nesting level in the category tree.",
         ),
         description="List of the shop's categories.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    category = graphene.Field(
+    category = BaseField(
         Category,
         id=graphene.Argument(graphene.ID, description="ID of the category."),
         slug=graphene.Argument(graphene.String, description="Slug of the category"),
         description="Look up a category by ID or slug.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    collection = graphene.Field(
+    collection = BaseField(
         Collection,
         id=graphene.Argument(
             graphene.ID,
@@ -189,6 +202,7 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     collections = FilterConnectionField(
         CollectionCountableConnection,
@@ -202,8 +216,9 @@ class ProductQueries(graphene.ObjectType):
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    product = graphene.Field(
+    product = BaseField(
         Product,
         id=graphene.Argument(
             graphene.ID,
@@ -221,11 +236,16 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     products = FilterConnectionField(
         ProductCountableConnection,
         filter=ProductFilterInput(description="Filtering options for products."),
+        where=ProductWhereInput(
+            description="Where filtering options." + ADDED_IN_314 + PREVIEW_FEATURE
+        ),
         sort_by=ProductOrder(description="Sort products."),
+        search=graphene.String(description="Search products." + ADDED_IN_314),
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."
         ),
@@ -234,13 +254,15 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    product_type = graphene.Field(
+    product_type = BaseField(
         ProductType,
         id=graphene.Argument(
             graphene.ID, description="ID of the product type.", required=True
         ),
         description="Look up a product type by ID.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     product_types = FilterConnectionField(
         ProductTypeCountableConnection,
@@ -249,15 +271,16 @@ class ProductQueries(graphene.ObjectType):
         ),
         sort_by=ProductTypeSortingInput(description="Sort product types."),
         description="List of the shop's product types.",
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
-    product_variant = graphene.Field(
+    product_variant = BaseField(
         ProductVariant,
         id=graphene.Argument(
             graphene.ID,
             description="ID of the product variant.",
         ),
         sku=graphene.Argument(
-            graphene.String, description="Sku of the product variant."
+            graphene.String, description="SKU of the product variant."
         ),
         external_reference=graphene.Argument(
             graphene.String, description=f"External ID of the product. {ADDED_IN_310}"
@@ -270,6 +293,7 @@ class ProductQueries(graphene.ObjectType):
             "permissions to include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     product_variants = FilterConnectionField(
         ProductVariantCountableConnection,
@@ -288,6 +312,7 @@ class ProductQueries(graphene.ObjectType):
             "include the unpublished items: "
             f"{', '.join([p.name for p in ALL_PRODUCTS_PERMISSIONS])}."
         ),
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
     report_product_sales = ConnectionField(
         ProductVariantCountableConnection,
@@ -302,6 +327,7 @@ class ProductQueries(graphene.ObjectType):
         permissions=[
             ProductPermissions.MANAGE_PRODUCTS,
         ],
+        doc_category=DOC_CATEGORY_PRODUCTS,
     )
 
     @staticmethod
@@ -407,7 +433,9 @@ class ProductQueries(graphene.ObjectType):
 
     @staticmethod
     @traced_resolver
-    def resolve_products(_root, info: ResolveInfo, *, channel=None, **kwargs):
+    def resolve_products(
+        _root, info: ResolveInfo, *, channel=None, search=None, **kwargs
+    ):
         if sort_field_from_kwargs(kwargs) == ProductOrderField.RANK:
             # sort by RANK can be used only with search filter
             if not search_string_in_kwargs(kwargs):
@@ -429,6 +457,10 @@ class ProductQueries(graphene.ObjectType):
         if channel is None and not has_required_permissions:
             channel = get_default_channel_slug_or_graphql_error()
         qs = resolve_products(info, requestor, channel_slug=channel)
+        if search:
+            qs = ChannelQsContext(
+                qs=search_products(qs.qs, search), channel_slug=channel
+            )
         kwargs["channel"] = channel
         qs = filter_connection_queryset(qs, kwargs)
         return create_connection_slice(qs, info, kwargs, ProductCountableConnection)
@@ -536,6 +568,7 @@ class ProductMutations(graphene.ObjectType):
 
     product_create = ProductCreate.Field()
     product_delete = ProductDelete.Field()
+    product_bulk_create = ProductBulkCreate.Field()
     product_bulk_delete = ProductBulkDelete.Field()
     product_update = ProductUpdate.Field()
     product_translate = ProductTranslate.Field()

@@ -34,7 +34,7 @@ def _get_payment_data(amount: Optional[Decimal], payment: Payment) -> Dict:
     }
 
 
-def event_transaction_capture_requested(
+def event_transaction_charge_requested(
     order_id: "UUID",
     reference: str,
     amount: Decimal,
@@ -43,7 +43,7 @@ def event_transaction_capture_requested(
 ):
     return OrderEvent.objects.create(
         order_id=order_id,
-        type=OrderEvents.TRANSACTION_CAPTURE_REQUESTED,
+        type=OrderEvents.TRANSACTION_CHARGE_REQUESTED,
         user=user,
         app=app,
         parameters={
@@ -72,12 +72,12 @@ def event_transaction_refund_requested(
     )
 
 
-def event_transaction_void_requested(
+def event_transaction_cancel_requested(
     order_id: "UUID", reference: str, user: Optional[User], app: Optional[App]
 ):
     return OrderEvent.objects.create(
         order_id=order_id,
-        type=OrderEvents.TRANSACTION_VOID_REQUESTED,
+        type=OrderEvents.TRANSACTION_CANCEL_REQUESTED,
         user=user,
         app=app,
         parameters={
@@ -265,7 +265,6 @@ def order_added_products_event(
     order_lines: List[OrderLine],
     quantity_diff: Optional[int] = None
 ) -> OrderEvent:
-
     if quantity_diff:
         lines = [_line_per_quantity_to_line_object(quantity_diff, order_lines[0])]
     else:
@@ -288,7 +287,6 @@ def order_removed_products_event(
     order_lines: List[OrderLine],
     quantity_diff: Optional[int] = None
 ) -> OrderEvent:
-
     if quantity_diff:
         lines = [_line_per_quantity_to_line_object(quantity_diff, order_lines[0])]
     else:
@@ -471,7 +469,6 @@ def payment_failed_event(
     message: str,
     payment: Payment
 ) -> OrderEvent:
-
     parameters = {"message": message}
 
     if payment:
@@ -486,17 +483,30 @@ def payment_failed_event(
     )
 
 
+def transaction_mark_order_as_paid_failed_event(
+    order: Order, user: Optional[User], app: Optional[App], message: str
+):
+    parameters = {"message": message}
+
+    return OrderEvent.objects.create(
+        order=order,
+        type=OrderEvents.TRANSACTION_MARK_AS_PAID_FAILED,
+        user=user,
+        app=app,
+        parameters=parameters,
+    )
+
+
 def transaction_event(
     *,
     order: Order,
     user: Optional[User],
     app: Optional[App],
     reference: str,
-    status: str,
-    name: str
+    status: Optional[str],
+    message: str
 ) -> OrderEvent:
-
-    parameters = {"message": name, "reference": reference, "status": status}
+    parameters = {"message": message, "reference": reference, "status": status}
     return OrderEvent.objects.create(
         order=order,
         type=OrderEvents.TRANSACTION_EVENT,
@@ -601,7 +611,6 @@ def order_returned_event(
     app: Optional[App],
     returned_lines: List[Tuple[int, OrderLine]],
 ):
-
     return OrderEvent.objects.create(
         order=order,
         type=OrderEvents.FULFILLMENT_RETURNED,

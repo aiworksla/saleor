@@ -3,10 +3,16 @@ import graphene
 from ...attribute import models
 from ..core import ResolveInfo
 from ..core.connection import create_connection_slice, filter_connection_queryset
-from ..core.descriptions import ADDED_IN_310
-from ..core.fields import FilterConnectionField
+from ..core.descriptions import ADDED_IN_310, ADDED_IN_311, PREVIEW_FEATURE
+from ..core.doc_category import DOC_CATEGORY_ATTRIBUTES
+from ..core.fields import BaseField, FilterConnectionField
 from ..core.utils.resolvers import resolve_by_global_id_slug_or_ext_ref
-from ..translations.mutations import AttributeTranslate, AttributeValueTranslate
+from ..translations.mutations import (
+    AttributeBulkTranslate,
+    AttributeTranslate,
+    AttributeValueBulkTranslate,
+    AttributeValueTranslate,
+)
 from .bulk_mutations import AttributeBulkDelete, AttributeValueBulkDelete
 from .filters import AttributeFilterInput
 from .mutations import (
@@ -28,12 +34,22 @@ class AttributeQueries(graphene.ObjectType):
         AttributeCountableConnection,
         description="List of the shop's attributes.",
         filter=AttributeFilterInput(description="Filtering options for attributes."),
+<<<<<<< HEAD
+=======
+        where=AttributeWhereInput(
+            description="Filtering options for attributes." + ADDED_IN_311
+        ),
+        search=graphene.String(
+            description="Search attributes." + ADDED_IN_311 + PREVIEW_FEATURE
+        ),
+>>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
         sort_by=AttributeSortingInput(description="Sorting options for attributes."),
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."
         ),
+        doc_category=DOC_CATEGORY_ATTRIBUTES,
     )
-    attribute = graphene.Field(
+    attribute = BaseField(
         Attribute,
         id=graphene.Argument(graphene.ID, description="ID of the attribute."),
         slug=graphene.Argument(graphene.String, description="Slug of the attribute."),
@@ -41,6 +57,7 @@ class AttributeQueries(graphene.ObjectType):
             graphene.String, description=f"External ID of the attribute. {ADDED_IN_310}"
         ),
         description="Look up an attribute by ID, slug or external reference.",
+        doc_category=DOC_CATEGORY_ATTRIBUTES,
     )
 
     def resolve_attributes(self, info: ResolveInfo, **kwargs):
@@ -62,6 +79,7 @@ class AttributeMutations(graphene.ObjectType):
     attribute_delete = AttributeDelete.Field()
     attribute_update = AttributeUpdate.Field()
     attribute_translate = AttributeTranslate.Field()
+    attribute_bulk_translate = AttributeBulkTranslate.Field()
     attribute_bulk_delete = AttributeBulkDelete.Field()
     attribute_value_bulk_delete = AttributeValueBulkDelete.Field()
 
@@ -69,5 +87,6 @@ class AttributeMutations(graphene.ObjectType):
     attribute_value_create = AttributeValueCreate.Field()
     attribute_value_delete = AttributeValueDelete.Field()
     attribute_value_update = AttributeValueUpdate.Field()
+    attribute_value_bulk_translate = AttributeValueBulkTranslate.Field()
     attribute_value_translate = AttributeValueTranslate.Field()
     attribute_reorder_values = AttributeReorderValues.Field()

@@ -3,7 +3,6 @@ from typing import Dict, List
 
 import graphene
 from django.core.exceptions import ValidationError
-from graphene.types import InputObjectType
 
 from ....account.models import User
 from ....checkout import AddressType
@@ -20,15 +19,23 @@ from ....order.utils import (
     update_order_display_gross_prices,
 )
 from ....permission.enums import OrderPermissions
+from ....shipping.utils import convert_to_shipping_method_data
 from ...account.i18n import I18nMixin
 from ...account.types import AddressInput
 from ...app.dataloaders import get_app_promise
 from ...channel.types import Channel
 from ...core import ResolveInfo
-from ...core.descriptions import ADDED_IN_36, ADDED_IN_310, PREVIEW_FEATURE
-from ...core.mutations import ModelMutation
+from ...core.descriptions import (
+    ADDED_IN_36,
+    ADDED_IN_310,
+    ADDED_IN_314,
+    PREVIEW_FEATURE,
+)
+from ...core.doc_category import DOC_CATEGORY_ORDERS
+from ...core.mutations import ModelWithRestrictedChannelAccessMutation
 from ...core.scalars import PositiveDecimal
-from ...core.types import NonNullList, OrderError
+from ...core.types import BaseInputObjectType, NonNullList, OrderError
+from ...core.utils import from_global_id_or_error
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ...product.types import ProductVariant
 from ...shipping.utils import get_shipping_model_by_object_id
@@ -38,12 +45,16 @@ from ..utils import (
     validate_product_is_published_in_channel,
     validate_variant_channel_listings,
 )
+from .utils import SHIPPING_METHOD_UPDATE_FIELDS, ShippingMethodUpdateMixin
 
 
-class OrderLineInput(graphene.InputObjectType):
+class OrderLineInput(BaseInputObjectType):
     quantity = graphene.Int(
         description="Number of variant items ordered.", required=True
     )
+
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
 
 class OrderLineCreateInput(OrderLineInput):
@@ -55,12 +66,25 @@ class OrderLineCreateInput(OrderLineInput):
         default_value=False,
         description=(
             "Flag that allow force splitting the same variant into multiple lines "
-            "by skipping the matching logic. " + ADDED_IN_36 + PREVIEW_FEATURE
+            "by skipping the matching logic. " + ADDED_IN_36
+        ),
+    )
+    price = PositiveDecimal(
+        required=False,
+        description=(
+            "Custom price of the item."
+            "When the line with the same variant "
+            "will be provided multiple times, the last price will be used."
+            + ADDED_IN_314
+            + PREVIEW_FEATURE
         ),
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
-class DraftOrderInput(InputObjectType):
+
+class DraftOrderInput(BaseInputObjectType):
     billing_address = AddressInput(description="Billing address of the customer.")
     user = graphene.ID(
         description="Customer associated with the draft order.", name="user"
@@ -89,6 +113,9 @@ class DraftOrderInput(InputObjectType):
         description="External ID of this order." + ADDED_IN_310, required=False
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
+
 
 class DraftOrderCreateInput(DraftOrderInput):
     lines = NonNullList(
@@ -98,8 +125,13 @@ class DraftOrderCreateInput(DraftOrderInput):
         ),
     )
 
+    class Meta:
+        doc_category = DOC_CATEGORY_ORDERS
 
-class DraftOrderCreate(ModelMutation, I18nMixin):
+
+class DraftOrderCreate(
+    ModelWithRestrictedChannelAccessMutation, ShippingMethodUpdateMixin, I18nMixin
+):
     class Arguments:
         input = DraftOrderCreateInput(
             required=True, description="Fields required to create an order."
@@ -114,15 +146,37 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
         error_type_field = "order_errors"
 
     @classmethod
+    def get_instance_channel_id(cls, instance, **data):
+        if channel_id := instance.channel_id:
+            return channel_id
+
+        channel_id = data["input"].get("channel_id")
+        if not channel_id:
+            raise ValidationError(
+                {
+                    "channel": ValidationError(
+                        "Channel id is required.", code=OrderErrorCode.REQUIRED.value
+                    )
+                }
+            )
+        _, channel_id = from_global_id_or_error(
+            channel_id, "Channel", raise_error=False
+        )
+
+        return channel_id
+
+    @classmethod
     def clean_input(cls, info: ResolveInfo, instance, data, **kwargs):
         shipping_address = data.pop("shipping_address", None)
         billing_address = data.pop("billing_address", None)
         redirect_url = data.pop("redirect_url", None)
         channel_id = data.pop("channel_id", None)
         manager = get_plugin_manager_promise(info.context).get()
-        shipping_method = get_shipping_model_by_object_id(
-            object_id=data.pop("shipping_method", None), raise_error=False
-        )
+        shipping_method_input = {}
+        if "shipping_method" in data:
+            shipping_method_input["shipping_method"] = get_shipping_model_by_object_id(
+                object_id=data.pop("shipping_method", None), raise_error=False
+            )
 
         if email := data.get("user_email", None):
             try:
@@ -132,7 +186,7 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
                 data["user"] = None
 
         cleaned_input = super().clean_input(info, instance, data, **kwargs)
-
+        cleaned_input.update(shipping_method_input)
         channel = cls.clean_channel_id(info, instance, cleaned_input, channel_id)
 
         voucher = cleaned_input.get("voucher", None)
@@ -144,8 +198,6 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
 
         lines = data.pop("lines", None)
         cls.clean_lines(cleaned_input, lines, channel)
-
-        cleaned_input["shipping_method"] = shipping_method
         cleaned_input["status"] = OrderStatus.DRAFT
         cleaned_input["origin"] = OrderOrigin.DRAFT
 
@@ -218,14 +270,20 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
                 variant = list(
                     filter(lambda x: (x.pk == int(variant_db_id)), variants)
                 )[0]
+                custom_price = line.get("price", None)
 
                 if line.get("force_new_line"):
-                    line_data = OrderLineData(variant_id=variant_db_id, variant=variant)
+                    line_data = OrderLineData(
+                        variant_id=variant_db_id,
+                        variant=variant,
+                        price_override=custom_price,
+                    )
                     grouped_lines_data.append(line_data)
                 else:
                     line_data = lines_data_map[variant_db_id]
                     line_data.variant_id = variant_db_id
                     line_data.variant = variant
+                    line_data.price_override = custom_price
 
                 if (quantity := line.get("quantity")) is not None:
                     line_data.quantity += quantity
@@ -286,12 +344,6 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
             instance.billing_address = billing_address.get_copy()
 
     @staticmethod
-    def _parse_shipping_method_name(instance: models.Order, cleaned_input):
-        shipping_method = cleaned_input.get("shipping_method")
-        if shipping_method:
-            instance.shipping_method_name = shipping_method.name
-
-    @staticmethod
     def _save_lines(info, instance, lines_data, app, manager):
         if lines_data:
             lines = []
@@ -315,14 +367,6 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
     def _commit_changes(
         cls, info: ResolveInfo, instance, cleaned_input, is_new_instance, app
     ):
-        if shipping_method := cleaned_input["shipping_method"]:
-            instance.shipping_method_name = shipping_method.name
-            tax_class = shipping_method.tax_class
-            if tax_class:
-                instance.shipping_tax_class = tax_class
-                instance.shipping_tax_class_name = tax_class.name
-                instance.shipping_tax_class_private_metadata = tax_class.metadata
-                instance.shipping_tax_class_metadata = tax_class.private_metadata
         super().save(info, instance, cleaned_input)
 
         # Create draft created event if the instance is from scratch
@@ -330,10 +374,6 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
             events.draft_order_created_event(
                 order=instance, user=info.context.user, app=app
             )
-
-        instance.save(
-            update_fields=["billing_address", "shipping_address", "updated_at"]
-        )
 
     @classmethod
     def should_invalidate_prices(cls, instance, cleaned_input, is_new_instance) -> bool:
@@ -364,12 +404,26 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
         app,
         manager
     ):
+        updated_fields = []
         with traced_atomic_transaction():
+            shipping_channel_listing = None
             # Process addresses
             cls._save_addresses(instance, cleaned_input)
 
-            # Parse shipping name
-            cls._parse_shipping_method_name(instance, cleaned_input)
+            if "shipping_method" in cleaned_input:
+                method = cleaned_input["shipping_method"]
+                if method is None:
+                    cls.clear_shipping_method_from_order(instance)
+                else:
+                    shipping_channel_listing = cls.validate_shipping_channel_listing(
+                        method, instance
+                    )
+                    shipping_method_data = convert_to_shipping_method_data(
+                        method,
+                        shipping_channel_listing,
+                    )
+                    cls.update_shipping_method(instance, method, shipping_method_data)
+                updated_fields.extend(SHIPPING_METHOD_UPDATE_FIELDS)
 
             # Save any changes create/update the draft
             cls._commit_changes(info, instance, cleaned_input, is_new_instance, app)
@@ -394,15 +448,20 @@ class DraftOrderCreate(ModelMutation, I18nMixin):
                 cls.call_event(manager.draft_order_updated, instance)
 
             # Post-process the results
-            updated_fields = [
-                "weight",
-                "search_vector",
-                "updated_at",
-                "display_gross_prices",
-            ]
+            updated_fields.extend(
+                [
+                    "weight",
+                    "search_vector",
+                    "updated_at",
+                    "display_gross_prices",
+                ]
+            )
             if cls.should_invalidate_prices(instance, cleaned_input, is_new_instance):
                 invalidate_order_prices(instance)
-                updated_fields.append("should_refresh_prices")
+                cls._update_shipping_price(instance, shipping_channel_listing)
+                updated_fields.extend(
+                    ["should_refresh_prices", "base_shipping_price_amount"]
+                )
             recalculate_order_weight(instance)
             update_order_search_vector(instance, save=False)
 

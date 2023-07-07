@@ -4,8 +4,8 @@ import graphene
 
 from ...attribute import models as attribute_models
 from ...page import models
-from ...permission.enums import PagePermissions
-from ..attribute.filters import AttributeFilterInput
+from ...permission.enums import PagePermissions, PageTypePermissions
+from ..attribute.filters import AttributeFilterInput, AttributeWhereInput
 from ..attribute.types import Attribute, AttributeCountableConnection, SelectedAttribute
 from ..core import ResolveInfo
 from ..core.connection import (
@@ -14,6 +14,7 @@ from ..core.connection import (
     filter_connection_queryset,
 )
 from ..core.descriptions import ADDED_IN_33, DEPRECATED_IN_3X_FIELD, RICH_CONTENT
+from ..core.doc_category import DOC_CATEGORY_PAGES
 from ..core.federation import federated_entity, resolve_federation_references
 from ..core.fields import FilterConnectionField, JSONString, PermissionsField
 from ..core.scalars import Date
@@ -43,6 +44,7 @@ class PageType(ModelObjectType[models.PageType]):
         description="Attributes that can be assigned to the page type.",
         permissions=[
             PagePermissions.MANAGE_PAGES,
+            PageTypePermissions.MANAGE_PAGE_TYPES_AND_ATTRIBUTES,
         ],
     )
     has_pages = PermissionsField(
@@ -50,6 +52,7 @@ class PageType(ModelObjectType[models.PageType]):
         description="Whether page type has pages assigned.",
         permissions=[
             PagePermissions.MANAGE_PAGES,
+            PageTypePermissions.MANAGE_PAGE_TYPES_AND_ATTRIBUTES,
         ],
     )
 
@@ -94,6 +97,7 @@ class PageType(ModelObjectType[models.PageType]):
 
 class PageTypeCountableConnection(CountableConnection):
     class Meta:
+        doc_category = DOC_CATEGORY_PAGES
         node = PageType
 
 
@@ -160,4 +164,5 @@ class Page(ModelObjectType[models.Page]):
 
 class PageCountableConnection(CountableConnection):
     class Meta:
+        doc_category = DOC_CATEGORY_PAGES
         node = Page

@@ -295,7 +295,6 @@ def test_update_or_create_variant_with_back_in_stock_webhooks_only_success(
     variant,
     warehouses,
 ):
-
     Stock.objects.bulk_create(
         [
             Stock(product_variant=variant, warehouse=warehouse)
@@ -332,7 +331,6 @@ def test_update_or_create_variant_with_back_in_stock_webhooks_only_failed(
     variant,
     warehouses,
 ):
-
     Stock.objects.bulk_create(
         [
             Stock(product_variant=variant, warehouse=warehouse)
@@ -435,7 +433,6 @@ def test_update_or_create_variant_stocks_with_out_of_stock_webhook_only(
     variant,
     warehouses,
 ):
-
     Stock.objects.bulk_create(
         [
             Stock(product_variant=variant, warehouse=warehouse, quantity=5)

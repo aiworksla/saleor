@@ -253,6 +253,24 @@ GIFT_CARD_DELETED = (
 )
 
 
+GIFT_CARD_SENT = (
+    fragments.GIFT_CARD_DETAILS
+    + """
+    subscription{
+      event{
+        ...on GiftCardSent {
+          giftCard{
+            ...GiftCardDetails
+          }
+          channel
+          sentToEmail
+        }
+      }
+    }
+"""
+)
+
+
 GIFT_CARD_STATUS_CHANGED = (
     fragments.GIFT_CARD_DETAILS
     + """
@@ -688,6 +706,48 @@ PRODUCT_METADATA_UPDATED = """
     }
 """
 
+PRODUCT_MEDIA_CREATED = """
+    subscription{
+      event{
+        ...on ProductMediaCreated{
+          productMedia{
+            id
+            url(size: 0)
+            productId
+          }
+        }
+      }
+    }
+"""
+
+PRODUCT_MEDIA_UPDATED = """
+    subscription{
+      event{
+        ...on ProductMediaUpdated{
+          productMedia{
+            id
+            url(size: 0)
+            productId
+          }
+        }
+      }
+    }
+"""
+
+PRODUCT_MEDIA_DELETED = """
+    subscription{
+      event{
+        ...on ProductMediaDeleted{
+          productMedia{
+            id
+            url(size: 0)
+            productId
+          }
+        }
+      }
+    }
+"""
+
 PRODUCT_VARIANT_CREATED = """
     subscription{
       event{
@@ -809,6 +869,42 @@ ORDER_FULLY_PAID = """
     }
 """
 
+ORDER_PAID = """
+    subscription{
+      event{
+        ...on OrderPaid{
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+
+ORDER_FULLY_REFUNDED = """
+    subscription{
+      event{
+        ...on OrderFullyRefunded{
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+
+ORDER_REFUNDED = """
+    subscription{
+      event{
+        ...on OrderRefunded{
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+
 ORDER_CANCELLED = """
     subscription{
       event{
@@ -820,6 +916,20 @@ ORDER_CANCELLED = """
       }
     }
 """
+
+
+ORDER_EXPIRED = """
+    subscription{
+      event{
+        ...on OrderExpired{
+          order{
+            id
+          }
+        }
+      }
+    }
+"""
+
 
 ORDER_FULFILLED = """
     subscription{
@@ -838,6 +948,18 @@ ORDER_METADATA_UPDATED = """
       event{
         ...on OrderMetadataUpdated{
           order{
+            id
+          }
+        }
+      }
+    }
+"""
+
+ORDER_BULK_CREATED = """
+    subscription{
+      event{
+        ...on OrderBulkCreated{
+          orders{
             id
           }
         }
@@ -1218,6 +1340,18 @@ CHECKOUT_UPDATED = """
     subscription{
       event{
         ...on CheckoutUpdated{
+          checkout{
+            id
+          }
+        }
+      }
+    }
+"""
+
+CHECKOUT_FULLY_PAID = """
+    subscription{
+      event{
+        ...on CheckoutFullyPaid{
           checkout{
             id
           }
@@ -2019,20 +2153,24 @@ INVALID_MULTIPLE_EVENTS_WITH_FRAGMENTS = (
       event{
         ...on ProductUpdated{
           product{
-          variants{
-            ...ProductVariant
-            }
-            ...CategoryDetails
+              variants{
+                ...ProductVariant
+                }
+              category {
+                ...CategoryDetails
+              }
           }
         }
       }
       event{
         ...on ProductCreated{
           product{
-          variants{
+            variants{
                 ...ProductVariant
             }
-            ...CategoryDetails
+            category{
+              ...CategoryDetails
+            }
           }
         }
       }
@@ -2049,13 +2187,49 @@ QUERY_WITH_MULTIPLE_FRAGMENTS = (
       event{
         ...on ProductUpdated{
           product{
-          variants{
-            ...ProductVariant
+            variants{
+              ...ProductVariant
             }
-            ...CategoryDetails
+            category{
+              ...CategoryDetails
+            }
           }
         }
       }
     }
     """
 )
+
+THUMBNAIL_CREATED = """
+    subscription {
+      event {
+        ... on ThumbnailCreated {
+          url
+          id
+          objectId
+          mediaUrl
+        }
+      }
+    }
+"""
+
+
+ORDER_CALCULATE_TAXES = """
+    subscription {
+      event {
+        ... on CalculateTaxes {
+          taxBase {
+            sourceObject {
+              ...on Order{
+                discounts {
+                  amount {
+                    amount
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+"""

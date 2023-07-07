@@ -93,15 +93,6 @@ class Address(ModelWithMetadata):
             ),
         ]
 
-    @property
-    def full_name(self):
-        return f"{self.first_name} {self.last_name}"
-
-    def __str__(self):
-        if self.company_name:
-            return f"{self.company_name} - {self.full_name}"
-        return self.full_name
-
     def __eq__(self, other):
         if not isinstance(other, Address):
             return False
@@ -173,6 +164,7 @@ class User(
     note = models.TextField(null=True, blank=True)
     date_joined = models.DateTimeField(default=timezone.now, editable=False)
     updated_at = models.DateTimeField(auto_now=True, db_index=True)
+    last_password_reset_request = models.DateTimeField(null=True, blank=True)
     default_shipping_address = models.ForeignKey(
         Address, related_name="+", null=True, blank=True, on_delete=models.SET_NULL
     )
@@ -227,12 +219,16 @@ class User(
         super().__init__(*args, **kwargs)
         self._effective_permissions = None
 
+    def __str__(self):
+        # Override the default __str__ of AbstractUser that returns username, which may
+        # lead to leaking sensitive data in logs.
+        return str(self.uuid)
+
     @property
     def effective_permissions(self) -> models.QuerySet[Permission]:
         if self._effective_permissions is None:
             self._effective_permissions = get_permissions()
             if not self.is_superuser:
-
                 UserPermission = User.user_permissions.through
                 user_permission_queryset = UserPermission.objects.filter(
                     user_id=self.pk
@@ -395,6 +391,8 @@ class Group(models.Model):
         verbose_name="permissions",
         blank=True,
     )
+    restricted_access_to_channels = models.BooleanField(default=False)
+    channels = models.ManyToManyField("channel.Channel", blank=True)
 
     objects = GroupManager()
 

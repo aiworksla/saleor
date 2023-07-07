@@ -18,10 +18,6 @@ from ..utils import handled_errors_logger, unhandled_errors_logger
 from .utils import assert_no_permission
 
 API_PATH = reverse("api")
-ACCESS_CONTROL_ALLOW_ORIGIN = "Access-Control-Allow-Origin"
-ACCESS_CONTROL_ALLOW_CREDENTIALS = "Access-Control-Allow-Credentials"
-ACCESS_CONTROL_ALLOW_HEADERS = "Access-Control-Allow-Headers"
-ACCESS_CONTROL_ALLOW_METHODS = "Access-Control-Allow-Methods"
 
 
 class ApiClient(Client):
@@ -30,6 +26,7 @@ class ApiClient(Client):
     def __init__(self, *args, **kwargs):
         user = kwargs.pop("user", None)
         app = kwargs.pop("app", None)
+        api_path = kwargs.pop("api_path", None)
         self._user = None
         self.token = None
         self.user = user
@@ -40,6 +37,9 @@ class ApiClient(Client):
         elif app:
             _, auth_token = app.tokens.create(name="Default")
             self.app_token = auth_token
+        self.api_path = API_PATH
+        if api_path:
+            self.api_path = api_path
         super().__init__(*args, **kwargs)
 
     def _base_environ(self, **request):
@@ -70,7 +70,7 @@ class ApiClient(Client):
         if data:
             data = json.dumps(data, cls=DjangoJSONEncoder)
         kwargs["content_type"] = "application/json"
-        return super().post(API_PATH, data, **kwargs)
+        return super().post(self.api_path, data, **kwargs)
 
     def post_graphql(
         self,
@@ -95,13 +95,13 @@ class ApiClient(Client):
         if permissions:
             if check_no_permissions:
                 with mock.patch("saleor.graphql.utils.handled_errors_logger"):
-                    response = super().post(API_PATH, data, **kwargs)
+                    response = super().post(self.api_path, data, **kwargs)
                 assert_no_permission(response)
             if self.app:
                 self.app.permissions.add(*permissions)
             else:
                 self.user.user_permissions.add(*permissions)
-        result = super().post(API_PATH, data, **kwargs)
+        result = super().post(self.api_path, data, **kwargs)
         flush_post_commit_hooks()
         return result
 
@@ -114,10 +114,10 @@ class ApiClient(Client):
         kwargs["content_type"] = MULTIPART_CONTENT
 
         if permissions:
-            response = super().post(API_PATH, *args, **kwargs)
+            response = super().post(self.api_path, *args, **kwargs)
             assert_no_permission(response)
             self.user.user_permissions.add(*permissions)
-        result = super().post(API_PATH, *args, **kwargs)
+        result = super().post(self.api_path, *args, **kwargs)
         flush_post_commit_hooks()
         return result
 
@@ -196,8 +196,14 @@ def graphql_log_handler():
 
 
 @pytest.fixture
-def superuser():
-    superuser = User.objects.create_superuser("superuser@example.com", "pass")
+def superuser(db):
+    superuser = User.objects.create_user(
+        "superuser@example.com",
+        "pass",
+        is_staff=True,
+        is_active=True,
+        is_superuser=True,
+    )
     return superuser
 
 
