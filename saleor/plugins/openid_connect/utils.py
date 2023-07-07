@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import requests
 from authlib.jose import JWTClaims, jwt
@@ -184,16 +184,8 @@ def get_user_from_oauth_access_token_in_jwt_format(
         logger.info("Unable to create a user object", extra={"error": e})
         return None
 
-    scope = token_payload.get("scope")
-    token_permissions = token_payload.get(
-        "permissions", []
-    ) if not token_payload.get(
-        "cognito:groups",
-        False
-    ) else token_payload.get(
-        "cognito:groups"
-    )
-
+    scope = token_payload.get("scp")
+    token_permissions = token_payload.get("permissions", [])
     # check if token contains expected aud
     aud = token_payload.get("aud")
     if not audience:
@@ -202,11 +194,6 @@ def get_user_from_oauth_access_token_in_jwt_format(
         audience_in_token = audience in aud
     else:
         audience_in_token = audience == aud
-
-    audience_in_token = True if token_payload.get(
-        "cognito:groups",
-        False
-    ) else audience_in_token
 
     is_staff_id = SALEOR_STAFF_PERMISSION
 
@@ -549,9 +536,10 @@ def get_incorrect_fields(plugin_configuration: "PluginConfiguration"):
         return incorrect_fields
 
 
-def get_saleor_permissions_qs_from_scope(scope: str) -> QuerySet[Permission]:
-    scope_list = scope.lower().strip().split()
-    return get_saleor_permissions_from_list(scope_list)
+def get_saleor_permissions_qs_from_scope(scope: Union[str, list]) -> QuerySet[Permission]:
+    if type(scope) == str:
+        scope = scope.lower().strip().split()
+    return get_saleor_permissions_from_list(scope)
 
 
 def get_saleor_permissions_from_list(permissions: list) -> QuerySet[Permission]:

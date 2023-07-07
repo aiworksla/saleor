@@ -103,7 +103,7 @@ def test_external_refresh_from_cookie(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "new_refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access",
+        "scp": "openid profile email offline_access",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -156,7 +156,7 @@ def test_external_refresh_from_input(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "new_refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access",
+        "scp": "openid profile email offline_access",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -207,7 +207,7 @@ def test_external_refresh_with_scope_permissions(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "new_refresh",
         "id_token": id_token,
-        "scope": (
+        "scp": (
             "openid profile email offline_access saleor:manage_orders saleor:staff"
         ),
         "expires_in": 86400,
@@ -261,7 +261,7 @@ def test_external_refresh_raises_error_when_token_is_invalid(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "new_refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access",
+        "scp": "openid profile email offline_access",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -361,7 +361,7 @@ def test_external_obtain_access_tokens(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access",
+        "scp": "openid profile email offline_access",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -419,7 +419,7 @@ def test_external_obtain_access_tokens_with_permissions(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access saleor:manage_orders",
+        "scp": "openid profile email offline_access saleor:manage_orders",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -488,7 +488,7 @@ def test_external_obtain_access_tokens_with_saleor_staff(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access saleor:staff",
+        "scp": "openid profile email offline_access saleor:staff",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -556,7 +556,7 @@ def test_external_obtain_access_tokens_user_which_is_no_more_staff(
         "access_token": "FeHkE_QbuU3cYy1a1eQUrCE5jRcUnBK3",
         "refresh_token": "refresh",
         "id_token": id_token,
-        "scope": "openid profile email offline_access",
+        "scp": "openid profile email offline_access",
         "expires_in": 86400,
         "token_type": "Bearer",
         "expires_at": 1600851112,
@@ -830,7 +830,7 @@ def test_authenticate_user_with_access_token(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = ""
+    decoded_access_token["scp"] = ""
 
     # mock get token from request
     monkeypatch.setattr(
@@ -868,7 +868,7 @@ def test_authenticate_user_with_access_token_unable_to_fetch_user_info(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = ""
+    decoded_access_token["scp"] = ""
 
     # mock get token from request
     monkeypatch.setattr(
@@ -908,7 +908,7 @@ def test_authenticate_user_with_jwt_access_token(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = ""
+    decoded_access_token["scp"] = ""
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
 
@@ -957,7 +957,7 @@ def test_authenticate_user_with_jwt_access_token_which_is_no_more_staff(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = ""
+    decoded_access_token["scp"] = ""
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
     decoded_token.get.side_effect = decoded_access_token.get
@@ -1004,7 +1004,7 @@ def test_authenticate_staff_user_with_jwt_access_token_and_staff_scope(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = "openid profile email saleor:staff"
+    decoded_access_token["scp"] = "openid profile email saleor:staff"
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
     decoded_token.get.side_effect = decoded_access_token.get
@@ -1051,7 +1051,7 @@ def test_authenticate_staff_user_with_jwt_access_token_and_staff_in_permissions_
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = "openid profile email"
+    decoded_access_token["scp"] = "openid profile email"
     decoded_access_token["permissions"] = ["saleor:staff"]
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
@@ -1101,7 +1101,7 @@ def test_authenticate_staff_user_with_jwt_access_token_with_permissions_field(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = "openid profile email"
+    decoded_access_token["scp"] = "openid profile email"
     decoded_access_token["permissions"] = ["saleor:manage_orders", "saleor:manage_apps"]
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
@@ -1147,7 +1147,7 @@ def test_authenticate_user_with_jwt_access_token_unable_to_fetch_user_info(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = ""
+    decoded_access_token["scp"] = ""
 
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
@@ -1189,7 +1189,7 @@ def test_authenticate_user_with_jwt_invalid_access_token(
         user_info_url="https://saleor.io/userinfo",
         use_oauth_scope_permissions=True,
     )
-    decoded_access_token["scope"] = ""
+    decoded_access_token["scp"] = ""
 
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
