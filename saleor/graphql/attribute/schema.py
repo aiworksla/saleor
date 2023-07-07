@@ -34,15 +34,12 @@ class AttributeQueries(graphene.ObjectType):
         AttributeCountableConnection,
         description="List of the shop's attributes.",
         filter=AttributeFilterInput(description="Filtering options for attributes."),
-<<<<<<< HEAD
-=======
         where=AttributeWhereInput(
             description="Filtering options for attributes." + ADDED_IN_311
         ),
         search=graphene.String(
             description="Search attributes." + ADDED_IN_311 + PREVIEW_FEATURE
         ),
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
         sort_by=AttributeSortingInput(description="Sorting options for attributes."),
         channel=graphene.String(
             description="Slug of a channel for which the data should be returned."

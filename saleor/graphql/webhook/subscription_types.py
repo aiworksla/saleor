@@ -865,8 +865,6 @@ class ProductVariantBackInStock(SubscriptionObjectType, ProductVariantBase):
         return stock.warehouse
 
 
-<<<<<<< HEAD
-=======
 class ProductVariantStockUpdated(SubscriptionObjectType, ProductVariantBase):
     warehouse = graphene.Field(
         "saleor.graphql.warehouse.types.Warehouse", description="Look up a warehouse."
@@ -898,7 +896,6 @@ class ProductVariantStockUpdated(SubscriptionObjectType, ProductVariantBase):
         return WarehouseByIdLoader(info.context).load(stock.warehouse_id)
 
 
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
 class SaleBase(AbstractType):
     sale = graphene.Field(
         "saleor.graphql.discount.types.Sale",

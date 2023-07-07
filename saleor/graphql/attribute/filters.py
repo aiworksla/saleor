@@ -136,8 +136,6 @@ class AttributeValueFilterInput(FilterInputObjectType):
     class Meta:
         doc_category = DOC_CATEGORY_ATTRIBUTES
         filterset_class = AttributeValueFilter
-<<<<<<< HEAD
-=======
 
 
 class AttributeInputTypeEnumFilterInput(BaseInputObjectType):
@@ -273,4 +271,3 @@ class AttributeWhereInput(WhereInputObjectType):
         filterset_class = AttributeWhere
         description = "Where filtering options." + ADDED_IN_311 + PREVIEW_FEATURE
         doc_category = DOC_CATEGORY_ATTRIBUTES
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb

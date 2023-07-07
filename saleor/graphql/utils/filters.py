@@ -48,8 +48,6 @@ def filter_by_id(object_type):
         return qs.filter(id__in=obj_pks)
 
     return inner
-<<<<<<< HEAD
-=======
 
 
 def filter_by_string_field(
@@ -101,4 +99,3 @@ def filter_where_by_numeric_field(
         if gte is not None:
             qs = qs.filter(**{f"{field}__gte": gte})
     return qs
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb

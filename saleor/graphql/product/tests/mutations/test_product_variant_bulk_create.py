@@ -1135,14 +1135,6 @@ def test_product_variant_bulk_create_duplicated_warehouses(
     data = content["data"]["productVariantBulkCreate"]
     errors = data["errors"]
 
-<<<<<<< HEAD
-    assert not data["productVariants"]
-    assert len(errors) == 1
-    error = errors[0]
-    assert error["field"] == "stocks"
-    assert error["index"] == 1
-    assert error["code"] == ProductErrorCode.DUPLICATED_INPUT_ITEM.name
-=======
     # then
     assert not data["results"][0]["errors"]
     assert not data["results"][0]["productVariant"]
@@ -1211,7 +1203,6 @@ def test_product_variant_bulk_create_duplicated_warehouses_when_ignore_failed(
     assert error["field"] == "warehouse"
     assert error["path"] == "stocks.0.warehouse"
     assert error["code"] == ProductVariantBulkErrorCode.DUPLICATED_INPUT_ITEM.name
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
     assert error["warehouses"] == [warehouse1_id]
 
 
@@ -1497,26 +1488,16 @@ def test_product_variant_bulk_create_duplicated_channels(
     )
     content = get_graphql_content(response)
     data = content["data"]["productVariantBulkCreate"]
-<<<<<<< HEAD
-    assert len(data["errors"]) == 1
-    error = data["errors"][0]
-    assert error["field"] == "channelListings"
-    assert error["code"] == ProductErrorCode.DUPLICATED_INPUT_ITEM.name
-    assert error["index"] == 0
-=======
 
     # then
     assert len(data["results"][0]["errors"]) == 2
     error = data["results"][0]["errors"][0]
     assert error["path"] == "channelListings.0.channelId"
     assert error["code"] == ProductVariantBulkErrorCode.DUPLICATED_INPUT_ITEM.name
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
     assert error["channels"] == [channel_id]
     assert product_variant_count == ProductVariant.objects.count()
 
 
-<<<<<<< HEAD
-=======
 def test_product_variant_bulk_create_duplicated_channels_when_ignore_failed(
     staff_api_client,
     product_available_in_many_channels,
@@ -1569,7 +1550,6 @@ def test_product_variant_bulk_create_duplicated_channels_when_ignore_failed(
     assert product_variant_count + 1 == ProductVariant.objects.count()
 
 
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
 def test_product_variant_bulk_create_too_many_decimal_places_in_price(
     staff_api_client,
     product_available_in_many_channels,
@@ -1606,22 +1586,6 @@ def test_product_variant_bulk_create_too_many_decimal_places_in_price(
     assert len(data["errors"]) == 4
     errors = data["errors"]
     assert errors[0]["field"] == "price"
-<<<<<<< HEAD
-    assert errors[0]["code"] == ProductErrorCode.INVALID.name
-    assert errors[0]["index"] == 0
-    assert errors[0]["channels"] == [channel_id]
-    assert errors[1]["field"] == "price"
-    assert errors[1]["code"] == ProductErrorCode.INVALID.name
-    assert errors[1]["index"] == 0
-    assert errors[1]["channels"] == [channel_pln_id]
-    assert errors[2]["field"] == "costPrice"
-    assert errors[2]["code"] == ProductErrorCode.INVALID.name
-    assert errors[2]["index"] == 0
-    assert errors[2]["channels"] == [channel_id]
-    assert errors[3]["field"] == "costPrice"
-    assert errors[3]["code"] == ProductErrorCode.INVALID.name
-    assert errors[3]["index"] == 0
-=======
     assert errors[0]["path"] == "channelListings.0.price"
     assert errors[0]["code"] == ProductVariantBulkErrorCode.INVALID_PRICE.name
     assert errors[0]["channels"] == [channel_id]
@@ -1636,7 +1600,6 @@ def test_product_variant_bulk_create_too_many_decimal_places_in_price(
     assert errors[3]["field"] == "costPrice"
     assert errors[3]["path"] == "channelListings.1.costPrice"
     assert errors[3]["code"] == ProductVariantBulkErrorCode.INVALID_PRICE.name
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
     assert errors[3]["channels"] == [channel_pln_id]
     assert product_variant_count == ProductVariant.objects.count()
 
@@ -1829,30 +1792,6 @@ def test_product_variant_bulk_create_many_errors(
     )
     content = get_graphql_content(response)
     data = content["data"]["productVariantBulkCreate"]
-<<<<<<< HEAD
-    assert len(data["errors"]) == 2
-    errors = data["errors"]
-    expected_errors = [
-        {
-            "field": "sku",
-            "index": 2,
-            "code": ProductErrorCode.UNIQUE.name,
-            "message": ANY,
-            "warehouses": None,
-            "channels": None,
-        },
-        {
-            "field": "attributes",
-            "index": 3,
-            "code": ProductErrorCode.NOT_FOUND.name,
-            "message": ANY,
-            "warehouses": None,
-            "channels": None,
-        },
-    ]
-    for expected_error in expected_errors:
-        assert expected_error in errors
-=======
 
     # then
     input_3_errors = data["results"][2]["errors"]
@@ -1873,35 +1812,10 @@ def test_product_variant_bulk_create_many_errors(
         "warehouses": None,
         "channels": None,
     }
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
     assert product_variant_count == ProductVariant.objects.count()
     update_product_discounted_price_task_mock.assert_not_called()
 
 
-<<<<<<< HEAD
-def test_product_variant_bulk_create_two_variants_duplicated_attribute_value(
-    staff_api_client,
-    product_with_variant_with_two_attributes,
-    color_attribute,
-    size_attribute,
-    permission_manage_products,
-):
-    product = product_with_variant_with_two_attributes
-    product_variant_count = ProductVariant.objects.count()
-    product_id = graphene.Node.to_global_id("Product", product.pk)
-    color_attribute_id = graphene.Node.to_global_id("Attribute", color_attribute.id)
-    size_attribute_id = graphene.Node.to_global_id("Attribute", size_attribute.id)
-    variants = [
-        {
-            "sku": str(uuid4())[:12],
-            "attributes": [
-                {"id": color_attribute_id, "values": ["red"]},
-                {"id": size_attribute_id, "values": ["small"]},
-            ],
-        }
-    ]
-    variables = {"productId": product_id, "variants": variants}
-=======
 def test_product_variant_bulk_create_many_errors_with_ignore_failed(
     staff_api_client, product, size_attribute, warehouses, permission_manage_products
 ):
@@ -1946,44 +1860,12 @@ def test_product_variant_bulk_create_many_errors_with_ignore_failed(
     }
 
     # when
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
     staff_api_client.user.user_permissions.add(permission_manage_products)
     response = staff_api_client.post_graphql(
         PRODUCT_VARIANT_BULK_CREATE_MUTATION, variables
     )
     content = get_graphql_content(response)
     data = content["data"]["productVariantBulkCreate"]
-<<<<<<< HEAD
-    assert len(data["errors"]) == 1
-    error = data["errors"][0]
-    assert error["field"] == "attributes"
-    assert error["code"] == ProductErrorCode.DUPLICATED_INPUT_ITEM.name
-    assert error["index"] == 0
-    assert product_variant_count == ProductVariant.objects.count()
-
-
-def test_product_variant_bulk_create_two_variants_duplicated_attribute_value_in_input(
-    staff_api_client,
-    product_with_variant_with_two_attributes,
-    permission_manage_products,
-    color_attribute,
-    size_attribute,
-):
-    product = product_with_variant_with_two_attributes
-    product_id = graphene.Node.to_global_id("Product", product.pk)
-    product_variant_count = ProductVariant.objects.count()
-    color_attribute_id = graphene.Node.to_global_id("Attribute", color_attribute.id)
-    size_attribute_id = graphene.Node.to_global_id("Attribute", size_attribute.id)
-    attributes = [
-        {"id": color_attribute_id, "values": [color_attribute.values.last().slug]},
-        {"id": size_attribute_id, "values": [size_attribute.values.last().slug]},
-    ]
-    variants = [
-        {"sku": str(uuid4())[:12], "attributes": attributes},
-        {"sku": str(uuid4())[:12], "attributes": attributes},
-    ]
-    variables = {"productId": product_id, "variants": variants}
-=======
 
     # then
     input_3_errors = data["results"][2]["errors"]
@@ -2051,21 +1933,12 @@ def test_product_variant_bulk_create_many_errors_with_reject_failed_rows(
     }
 
     # when
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
     staff_api_client.user.user_permissions.add(permission_manage_products)
     response = staff_api_client.post_graphql(
         PRODUCT_VARIANT_BULK_CREATE_MUTATION, variables
     )
     content = get_graphql_content(response)
     data = content["data"]["productVariantBulkCreate"]
-<<<<<<< HEAD
-    assert len(data["errors"]) == 1
-    error = data["errors"][0]
-    assert error["field"] == "attributes"
-    assert error["code"] == ProductErrorCode.DUPLICATED_INPUT_ITEM.name
-    assert error["index"] == 1
-    assert product_variant_count == ProductVariant.objects.count()
-=======
 
     # then
     input_3_errors = data["results"][2]["errors"]
@@ -2088,7 +1961,6 @@ def test_product_variant_bulk_create_many_errors_with_reject_failed_rows(
         "channels": None,
     }
     assert product_variant_count + 1 == ProductVariant.objects.count()
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
 
 
 def test_product_variant_bulk_create_two_variants_duplicated_one_attribute_value(
