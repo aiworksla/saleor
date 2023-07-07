@@ -2,11 +2,11 @@ import django_filters
 import graphene
 from django.db.models import Q
 
+from ...attribute import AttributeInputType
 from ...attribute.models import Attribute, AttributeValue
 from ...permission.utils import has_one_of_permissions
 from ...product import models
 from ...product.models import ALL_PRODUCTS_PERMISSIONS
-from ..attribute.enums import AttributeTypeEnum
 from ..channel.filters import get_channel_slug_from_filter_data
 from ..core.descriptions import ADDED_IN_311, PREVIEW_FEATURE
 from ..core.doc_category import DOC_CATEGORY_ATTRIBUTES
@@ -17,6 +17,7 @@ from ..core.filters import (
     GlobalIDMultipleChoiceFilter,
     ListObjectTypeFilter,
     MetadataFilterBase,
+    OperationObjectTypeFilter,
     filter_slug_list,
 )
 from ..core.types import (
@@ -29,6 +30,8 @@ from ..core.types import (
 from ..core.types.filter_input import FilterInputDescriptions, WhereInputObjectType
 from ..core.utils import from_global_id_or_error
 from ..utils import get_user_or_app_from_context
+from ..utils.filters import filter_by_id, filter_by_string_field
+from .enums import AttributeEntityTypeEnum, AttributeInputTypeEnum, AttributeTypeEnum
 
 
 def filter_attributes_by_product_types(qs, field, value, requestor, channel_slug):
@@ -65,7 +68,13 @@ def filter_attributes_by_product_types(qs, field, value, requestor, channel_slug
     )
 
 
-def filter_attribute_type(qs, _, value):
+def filter_attribute_search(qs, _, value):
+    if not value:
+        return qs
+    return qs.filter(Q(slug__ilike=value) | Q(name__ilike=value))
+
+
+def filter_by_attribute_type(qs, _, value):
     if not value:
         return qs
     return qs.filter(type=value)
@@ -89,9 +98,9 @@ class AttributeValueFilter(django_filters.FilterSet):
 
 
 class AttributeFilter(MetadataFilterBase):
-    search = django_filters.CharFilter(method="filter_attribute_search")
+    search = django_filters.CharFilter(method=filter_attribute_search)
     ids = GlobalIDMultipleChoiceFilter(field_name="id")
-    type = EnumFilter(input_class=AttributeTypeEnum, method=filter_attribute_type)
+    type = EnumFilter(input_class=AttributeTypeEnum, method=filter_by_attribute_type)
 
     in_collection = GlobalIDFilter(method="filter_in_collection")
     in_category = GlobalIDFilter(method="filter_in_category")
@@ -107,9 +116,6 @@ class AttributeFilter(MetadataFilterBase):
             "filterable_in_dashboard",
             "available_in_grid",
         ]
-
-    def filter_attribute_search(self, qs, _, value):
-        return qs.filter(Q(slug__ilike=value) | Q(name__ilike=value))
 
     def filter_in_collection(self, qs, name, value):
         requestor = get_user_or_app_from_context(self.request)
