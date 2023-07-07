@@ -1,5 +1,6 @@
 import itertools
 
+import graphene
 from django.db import models
 from django_filters.filterset import FILTER_FOR_DBFIELD_DEFAULTS, BaseFilterSet
 from graphene import Argument, InputField, String
@@ -44,13 +45,8 @@ def get_filterset_class(filterset_class=None):
     )
 
 
-<<<<<<< HEAD
-class FilterInputObjectType(InputObjectType):
-    """Class for storing and serving django-filtres as graphQL input.
-=======
 class FilterInputObjectType(BaseInputObjectType):
     """Class for storing and serving django-filters as graphQL input.
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
 
     FilterSet class which inherits from django-filters.FilterSet should be
     provided with using fitlerset_class argument.
@@ -114,8 +110,6 @@ class ChannelFilterInputObjectType(FilterInputObjectType):
 
     class Meta:
         abstract = True
-<<<<<<< HEAD
-=======
 
 
 class WhereInputObjectType(FilterInputObjectType):
@@ -258,4 +252,3 @@ class GlobalIDFilterInput(graphene.InputObjectType):
             + ADDED_IN_314
             + PREVIEW_FEATURE
         )
->>>>>>> 74bbab2cdb7fcba9d0ae2642002dad510d499deb
