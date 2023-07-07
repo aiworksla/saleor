@@ -105,6 +105,7 @@ if TYPE_CHECKING:
     from ...shipping.interface import ShippingMethodData
     from ...shipping.models import ShippingMethod, ShippingZone
     from ...tax.models import TaxClass
+    from ...translation.models import Translation
     from ...warehouse.models import Stock, Warehouse
     from ...webhook.models import Webhook
 

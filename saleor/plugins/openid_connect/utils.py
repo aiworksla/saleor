@@ -178,7 +178,7 @@ def get_user_from_oauth_access_token_in_jwt_format(
     user_info = get_user_info_from_cache_or_fetch(
         user_info_url,
         access_token,
-        token_payload["exp"],
+        token_payload.get("exp"),
     )
     if not user_info:
         logger.info(
@@ -198,14 +198,7 @@ def get_user_from_oauth_access_token_in_jwt_format(
         return None
 
     scope = token_payload.get("scope")
-    token_permissions = token_payload.get(
-        "permissions", []
-    ) if not token_payload.get(
-        "cognito:groups",
-        False
-    ) else token_payload.get(
-        "cognito:groups"
-    )
+    token_permissions = token_payload.get("permissions", [])
 
     # check if token contains expected aud
     aud = token_payload.get("aud")

@@ -41,6 +41,7 @@ class PageType(ModelObjectType[models.PageType]):
     available_attributes = FilterConnectionField(
         AttributeCountableConnection,
         filter=AttributeFilterInput(),
+        where=AttributeWhereInput(),
         description="Attributes that can be assigned to the page type.",
         permissions=[
             PagePermissions.MANAGE_PAGES,

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 import pytz
 import requests
+from authlib.jose import JWTClaims
 from django.core.exceptions import ValidationError
 from django.utils.timezone import make_aware
 from freezegun import freeze_time
@@ -35,6 +36,7 @@ from ..utils import (
     get_or_create_user_from_payload,
     get_saleor_permission_names,
     get_saleor_permissions_qs_from_scope,
+    get_user_from_oauth_access_token_in_jwt_format,
     get_user_from_token,
     get_user_info,
     validate_refresh_token,

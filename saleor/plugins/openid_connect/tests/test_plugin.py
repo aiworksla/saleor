@@ -975,6 +975,7 @@ def test_authenticate_user_with_jwt_access_token(
     decoded_access_token["scope"] = ""
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
+    decoded_token.get.side_effect = decoded_access_token.get
 
     # mock get token from request
     monkeypatch.setattr(
@@ -1241,6 +1242,7 @@ def test_authenticate_user_with_jwt_access_token_unable_to_fetch_user_info(
 
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
+    decoded_token.get.side_effect = decoded_access_token.get
 
     # mock get token from request
     monkeypatch.setattr(
@@ -1283,6 +1285,7 @@ def test_authenticate_user_with_jwt_invalid_access_token(
 
     decoded_token = MagicMock()
     decoded_token.__getitem__.side_effect = decoded_access_token.__getitem__
+    decoded_token.get.side_effect = decoded_access_token.get
     decoded_token.validate.side_effect = JoseError()
 
     # mock get token from request
