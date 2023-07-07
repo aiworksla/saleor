@@ -14,7 +14,7 @@ from ..translations.mutations import (
     AttributeValueTranslate,
 )
 from .bulk_mutations import AttributeBulkDelete, AttributeValueBulkDelete
-from .filters import AttributeFilterInput
+from .filters import AttributeFilterInput, AttributeWhereInput, filter_attribute_search
 from .mutations import (
     AttributeCreate,
     AttributeDelete,
@@ -57,9 +57,11 @@ class AttributeQueries(graphene.ObjectType):
         doc_category=DOC_CATEGORY_ATTRIBUTES,
     )
 
-    def resolve_attributes(self, info: ResolveInfo, **kwargs):
+    def resolve_attributes(self, info: ResolveInfo, *, search=None, **kwargs):
         qs = resolve_attributes(info)
         qs = filter_connection_queryset(qs, kwargs, info.context)
+        if search:
+            qs = filter_attribute_search(qs, None, search)
         return create_connection_slice(qs, info, kwargs, AttributeCountableConnection)
 
     def resolve_attribute(
