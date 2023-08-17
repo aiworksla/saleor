@@ -80,7 +80,7 @@ INTERNAL_IPS = get_list(os.environ.get("INTERNAL_IPS", "127.0.0.1"))
 # Maximum time in seconds Django can keep the database connections opened.
 # Set the value to 0 to disable connection persistence, database connections
 # will be closed after each request.
-DB_CONN_MAX_AGE = int(os.environ.get("DB_CONN_MAX_AGE", 600))
+DB_CONN_MAX_AGE = int(os.environ.get("DB_CONN_MAX_AGE", 0))
 
 DATABASE_CONNECTION_DEFAULT_NAME = "default"
 # TODO: For local envs will be activated in separate PR.
@@ -92,6 +92,7 @@ DATABASES = {
     DATABASE_CONNECTION_DEFAULT_NAME: dj_database_url.config(
         default="postgres://saleor:saleor@localhost:5432/saleor",
         conn_max_age=DB_CONN_MAX_AGE,
+        conn_health_checks=True,
     ),
     DATABASE_CONNECTION_REPLICA_NAME: dj_database_url.config(
         default="postgres://saleor:saleor@localhost:5432/saleor",
@@ -99,6 +100,7 @@ DATABASES = {
         # and we need to update docs.
         # default="postgres://saleor_read_only:saleor@localhost:5432/saleor",
         conn_max_age=DB_CONN_MAX_AGE,
+        conn_health_checks=True,
     ),
 }
 
