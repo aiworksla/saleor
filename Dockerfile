@@ -8,11 +8,11 @@ RUN apt-get -y update \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements_dev.txt /app/
 WORKDIR /app
-## sphinxcontrib-applehelp installed due to https://github.com/saleor/saleor/issues/11664
-RUN pip install sphinxcontrib-applehelp==1.0.2
-RUN pip install -r requirements_dev.txt
+RUN --mount=type=cache,mode=0755,target=/root/.cache/pip pip install poetry==1.7.0
+RUN poetry config virtualenvs.create false
+COPY poetry.lock pyproject.toml /app/
+RUN --mount=type=cache,mode=0755,target=/root/.cache/pypoetry poetry install --no-root
 
 ### Final image
 FROM python:3.9-slim
@@ -27,9 +27,9 @@ RUN apt-get update \
   libopenjp2-7 \
   libpango-1.0-0 \
   libpangocairo-1.0-0 \
-  libssl1.1 \
-  libtiff5 \
-  libwebp6 \
+  libssl3 \
+  libtiff6 \
+  libwebp7 \
   libxml2 \
   libpq5 \
   shared-mime-info \
@@ -38,6 +38,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 RUN echo 'image/webp webp' >> /etc/mime.types
+RUN echo 'image/avif avif' >> /etc/mime.types
 
 RUN mkdir -p /app/media /app/static \
   && chown -R saleor:saleor /app/
@@ -54,18 +55,12 @@ RUN SECRET_KEY=dummy STATIC_URL=${STATIC_URL} python3 manage.py collectstatic --
 EXPOSE 8000
 ENV PYTHONUNBUFFERED 1
 
-ARG COMMIT_ID
-ARG PROJECT_VERSION
-ENV PROJECT_VERSION="${PROJECT_VERSION}"
-
-LABEL org.opencontainers.image.title="mirumee/saleor"                                  \
+LABEL org.opencontainers.image.title="saleor/saleor"                                  \
       org.opencontainers.image.description="\
 A modular, high performance, headless e-commerce platform built with Python, \
 GraphQL, Django, and ReactJS."                                                         \
       org.opencontainers.image.url="https://saleor.io/"                                \
       org.opencontainers.image.source="https://github.com/saleor/saleor"               \
-      org.opencontainers.image.revision="$COMMIT_ID"                                   \
-      org.opencontainers.image.version="$PROJECT_VERSION"                              \
       org.opencontainers.image.authors="Saleor Commerce (https://saleor.io)"           \
       org.opencontainers.image.licenses="BSD 3"
 

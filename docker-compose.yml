@@ -1,0 +1,50 @@
+version: '3'
+
+services:
+  saleor-postgres:
+    image: postgres
+    container_name: saleor-postgres
+    environment:
+      POSTGRES_PASSWORD: saleor
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  saleor-migrate:
+    image: postgres
+    depends_on:
+      - saleor-postgres
+    entrypoint: >
+      /bin/sh -c "
+      until pg_isready -h saleor-postgres -p 5432;
+      do
+        echo 'Waiting for PostgreSQL to be ready...';
+        sleep 2;
+      done;
+      PGPASSWORD=saleor psql -h saleor-postgres -U postgres -c \"CREATE ROLE saleor WITH LOGIN PASSWORD 'saleor';\" &&
+      PGPASSWORD=saleor psql -h saleor-postgres -U postgres -d postgres -c \"CREATE DATABASE saleor;\" &&
+      PGPASSWORD=saleor psql -h saleor-postgres -U postgres -d postgres -c \"ALTER USER saleor WITH SUPERUSER;\" &&
+      PGPASSWORD=saleor psql -h saleor-postgres -U postgres -d postgres -c \"GRANT ALL PRIVILEGES ON DATABASE saleor TO saleor;\" &&
+      PGPASSWORD=saleor psql -h saleor-postgres -U postgres -d postgres -c \"ALTER USER saleor CREATEDB;\"
+      "
+
+  saleor:
+    build:
+      context: .
+      dockerfile: Dockerfile  # Adjust if your Dockerfile is in a different location
+    container_name: saleor
+    depends_on:
+      - saleor-postgres
+    environment:
+      DJANGO_DB_HOST: saleor-postgres
+      DJANGO_DB_PORT: 5432
+      DJANGO_DB_NAME: saleor
+      DJANGO_DB_USER: saleor
+      DJANGO_DB_PASSWORD: saleor
+    command: ["gunicorn", "--bind", ":8000", "--workers", "4", "--worker-class", "saleor.asgi.gunicorn_worker.UvicornWorker", "saleor.asgi:application"]
+    ports:
+      - "8000:8000"
