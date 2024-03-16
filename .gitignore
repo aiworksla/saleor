@@ -22,7 +22,7 @@ dist/
 /static/
 
 # Environments
-!.env
+.env
 .venv
 env/
 venv/
